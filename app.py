@@ -1,0 +1,496 @@
+import json
+import os
+from datetime import datetime
+
+import streamlit as st
+from PIL import Image
+
+from generate_text import generate_post, DEFAULT_SYSTEM_PROMPT, DEFAULT_IMAGE_PROMPT_TEMPLATE
+from generate_image import generate_image
+from post_telegram import send_post
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+IDEAS_FILE = os.path.join(BASE_DIR, "ideas.json")
+HISTORY_FILE = os.path.join(BASE_DIR, "history.json")
+PROMPTS_FILE = os.path.join(BASE_DIR, "prompts.json")
+ENV_FILE = os.path.join(BASE_DIR, ".env")
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+
+def load_json(path: str, default=None):
+    if not os.path.exists(path):
+        return default if default is not None else []
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_json(path: str, data):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def load_prompts() -> dict:
+    defaults = {
+        "system_prompt": DEFAULT_SYSTEM_PROMPT,
+        "image_prompt_template": DEFAULT_IMAGE_PROMPT_TEMPLATE,
+    }
+    saved = load_json(PROMPTS_FILE, {})
+    return {**defaults, **saved}
+
+
+def save_env(values: dict):
+    lines = []
+    for key, val in values.items():
+        lines.append(f"{key}={val}")
+    with open(ENV_FILE, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def load_env_values() -> dict:
+    values = {}
+    if os.path.exists(ENV_FILE):
+        with open(ENV_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, _, val = line.partition("=")
+                    values[key.strip()] = val.strip()
+    return values
+
+
+# ── Page config ──────────────────────────────────────────────────────────────
+
+st.set_page_config(
+    page_title="Автопостер Telegram",
+    page_icon="📱",
+    layout="wide",
+)
+
+st.title("📱 Автопостер для Telegram")
+
+# ── Sidebar — Settings ──────────────────────────────────────────────────────
+
+with st.sidebar:
+    st.header("⚙️ Настройки")
+
+    env = load_env_values()
+
+    text_prov = st.selectbox(
+        "Провайдер текста",
+        ["claude", "gemini", "openai"],
+        index=["claude", "gemini", "openai"].index(env.get("TEXT_PROVIDER", "claude"))
+        if env.get("TEXT_PROVIDER", "claude") in ["claude", "gemini", "openai"]
+        else 0,
+    )
+    image_prov = st.selectbox(
+        "Провайдер картинок",
+        ["gemini", "openai"],
+        index=["gemini", "openai"].index(env.get("IMAGE_PROVIDER", "gemini"))
+        if env.get("IMAGE_PROVIDER", "gemini") in ["gemini", "openai"]
+        else 0,
+    )
+
+    st.divider()
+    st.subheader("🔑 API-ключи")
+
+    claude_key = st.text_input("Claude API Key", value=env.get("CLAUDE_API_KEY", ""), type="password")
+    gemini_key = st.text_input("Gemini API Key", value=env.get("GEMINI_API_KEY", ""), type="password")
+    openai_key = st.text_input("OpenAI API Key", value=env.get("OPENAI_API_KEY", ""), type="password")
+
+    st.divider()
+    st.subheader("📨 Telegram")
+
+    tg_token = st.text_input("Bot Token", value=env.get("TELEGRAM_BOT_TOKEN", ""), type="password")
+    tg_channel = st.text_input("Channel ID", value=env.get("TELEGRAM_CHANNEL_ID", ""))
+
+    if st.button("💾 Сохранить настройки", use_container_width=True):
+        save_env({
+            "TEXT_PROVIDER": text_prov,
+            "IMAGE_PROVIDER": image_prov,
+            "CLAUDE_API_KEY": claude_key,
+            "GEMINI_API_KEY": gemini_key,
+            "OPENAI_API_KEY": openai_key,
+            "TELEGRAM_BOT_TOKEN": tg_token,
+            "TELEGRAM_CHANNEL_ID": tg_channel,
+        })
+        st.success("Настройки сохранены!")
+
+# ── Tabs ─────────────────────────────────────────────────────────────────────
+
+tab_prompts, tab_create, tab_ideas, tab_history, tab_auto = st.tabs(
+    ["✏️ Промпты", "🚀 Создать пост", "📋 Идеи", "📊 История", "⏰ Автопубликация"]
+)
+
+# ── Tab: Prompts ─────────────────────────────────────────────────────────────
+
+with tab_prompts:
+    st.header("✏️ Настройка промптов")
+
+    prompts = load_prompts()
+
+    st.subheader("Системный промпт для текста")
+    st.caption("Инструкции для AI при генерации текста поста")
+    new_system = st.text_area(
+        "Системный промпт",
+        value=prompts["system_prompt"],
+        height=350,
+        label_visibility="collapsed",
+    )
+
+    st.subheader("Шаблон промпта для картинки")
+    st.caption("Используется как fallback, если AI не вернул промпт. Используйте {idea} для подстановки темы.")
+    new_image_tpl = st.text_area(
+        "Промпт для картинки",
+        value=prompts["image_prompt_template"],
+        height=100,
+        label_visibility="collapsed",
+    )
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("💾 Сохранить промпты", use_container_width=True):
+            save_json(PROMPTS_FILE, {
+                "system_prompt": new_system,
+                "image_prompt_template": new_image_tpl,
+            })
+            st.success("Промпты сохранены!")
+    with col2:
+        if st.button("🔄 Сбросить по умолчанию", use_container_width=True):
+            if os.path.exists(PROMPTS_FILE):
+                os.remove(PROMPTS_FILE)
+            st.success("Промпты сброшены!")
+            st.rerun()
+
+# ── Tab: Create Post ─────────────────────────────────────────────────────────
+
+with tab_create:
+    st.header("🚀 Создать пост")
+
+    ideas = load_json(IDEAS_FILE, [])
+    unused = [item["idea"] for item in ideas if not item.get("used", False)]
+
+    input_mode = st.radio("Источник идеи", ["Из списка", "Ввести вручную"], horizontal=True)
+
+    if input_mode == "Из списка":
+        if unused:
+            idea = st.selectbox("Выберите идею", unused)
+        else:
+            st.warning("Нет неиспользованных идей. Добавьте новые во вкладке «Идеи».")
+            idea = ""
+    else:
+        idea = st.text_input("Введите идею для поста")
+
+    # Generate
+    if st.button("🎨 Сгенерировать пост", disabled=not idea, use_container_width=True):
+        prompts = load_prompts()
+        env = load_env_values()
+
+        with st.spinner("Генерирую текст..."):
+            try:
+                post_text, image_prompt = generate_post(
+                    idea,
+                    provider=env.get("TEXT_PROVIDER", "claude"),
+                    system_prompt=prompts["system_prompt"],
+                    image_prompt_template=prompts["image_prompt_template"],
+                )
+                st.session_state["post_text"] = post_text
+                st.session_state["image_prompt"] = image_prompt
+                st.session_state["idea"] = idea
+            except Exception as e:
+                st.error(f"Ошибка генерации текста: {e}")
+
+        if "image_prompt" in st.session_state:
+            with st.spinner("Генерирую картинку..."):
+                try:
+                    image_path = generate_image(
+                        st.session_state["image_prompt"],
+                        provider=env.get("IMAGE_PROVIDER", "gemini"),
+                    )
+                    st.session_state["image_path"] = image_path
+                except Exception as e:
+                    st.error(f"Ошибка генерации картинки: {e}")
+
+    # Preview
+    if "post_text" in st.session_state:
+        st.divider()
+        st.subheader("Превью поста")
+
+        col_text, col_img = st.columns([3, 2])
+
+        with col_text:
+            edited_text = st.text_area(
+                "Текст поста (можно редактировать)",
+                value=st.session_state["post_text"],
+                height=300,
+            )
+            st.session_state["post_text"] = edited_text
+
+            st.caption("Предпросмотр HTML:")
+            st.markdown(edited_text.replace("<b>", "**").replace("</b>", "**")
+                        .replace("<i>", "*").replace("</i>", "*"), unsafe_allow_html=True)
+
+        with col_img:
+            if "image_path" in st.session_state and os.path.exists(st.session_state["image_path"]):
+                st.image(st.session_state["image_path"], caption="Сгенерированная картинка", use_container_width=True)
+
+            edited_img_prompt = st.text_area(
+                "Промпт для картинки (можно изменить)",
+                value=st.session_state.get("image_prompt", ""),
+                height=100,
+            )
+            st.session_state["image_prompt"] = edited_img_prompt
+
+            if st.button("🔄 Перегенерировать картинку"):
+                env = load_env_values()
+                with st.spinner("Генерирую новую картинку..."):
+                    try:
+                        old_path = st.session_state.get("image_path")
+                        if old_path and os.path.exists(old_path):
+                            os.remove(old_path)
+                        image_path = generate_image(
+                            st.session_state["image_prompt"],
+                            provider=env.get("IMAGE_PROVIDER", "gemini"),
+                        )
+                        st.session_state["image_path"] = image_path
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Ошибка: {e}")
+
+        # Publish
+        st.divider()
+        col_pub, col_regen = st.columns(2)
+
+        with col_pub:
+            if st.button("📤 Опубликовать в Telegram", use_container_width=True, type="primary"):
+                env = load_env_values()
+                if not env.get("TELEGRAM_BOT_TOKEN") or not env.get("TELEGRAM_CHANNEL_ID"):
+                    st.error("Заполните Telegram Bot Token и Channel ID в настройках!")
+                elif "image_path" not in st.session_state:
+                    st.error("Сначала сгенерируйте картинку!")
+                else:
+                    with st.spinner("Публикую..."):
+                        try:
+                            result = send_post(
+                                st.session_state["image_path"],
+                                st.session_state["post_text"],
+                                bot_token=env.get("TELEGRAM_BOT_TOKEN"),
+                                channel_id=env.get("TELEGRAM_CHANNEL_ID"),
+                            )
+                            msg_id = result["result"]["message_id"]
+                            st.success(f"Опубликовано! message_id: {msg_id}")
+
+                            # Mark idea as used
+                            current_idea = st.session_state.get("idea", "")
+                            ideas = load_json(IDEAS_FILE, [])
+                            for item in ideas:
+                                if item["idea"] == current_idea and not item.get("used"):
+                                    item["used"] = True
+                                    break
+                            save_json(IDEAS_FILE, ideas)
+
+                            # Save history
+                            history = load_json(HISTORY_FILE, [])
+                            history.append({
+                                "date": datetime.now().isoformat(),
+                                "idea": current_idea,
+                                "post_text": st.session_state["post_text"][:200],
+                                "text_provider": env.get("TEXT_PROVIDER", ""),
+                                "image_provider": env.get("IMAGE_PROVIDER", ""),
+                                "message_id": msg_id,
+                            })
+                            save_json(HISTORY_FILE, history)
+
+                            # Cleanup
+                            old_path = st.session_state.pop("image_path", None)
+                            if old_path and os.path.exists(old_path):
+                                os.remove(old_path)
+                            st.session_state.pop("post_text", None)
+                            st.session_state.pop("image_prompt", None)
+                            st.session_state.pop("idea", None)
+
+                        except Exception as e:
+                            st.error(f"Ошибка публикации: {e}")
+
+        with col_regen:
+            if st.button("🔄 Перегенерировать всё", use_container_width=True):
+                old_path = st.session_state.pop("image_path", None)
+                if old_path and os.path.exists(old_path):
+                    os.remove(old_path)
+                st.session_state.pop("post_text", None)
+                st.session_state.pop("image_prompt", None)
+                st.rerun()
+
+# ── Tab: Ideas ───────────────────────────────────────────────────────────────
+
+with tab_ideas:
+    st.header("📋 Управление идеями")
+
+    ideas = load_json(IDEAS_FILE, [])
+
+    # Add new idea
+    st.subheader("Добавить идею")
+    new_idea = st.text_input("Новая идея для поста", key="new_idea_input")
+    if st.button("➕ Добавить", disabled=not new_idea):
+        ideas.append({"idea": new_idea, "used": False})
+        save_json(IDEAS_FILE, ideas)
+        st.success(f"Идея добавлена: {new_idea}")
+        st.rerun()
+
+    st.divider()
+
+    # Ideas table
+    if not ideas:
+        st.info("Пока нет идей. Добавьте первую!")
+    else:
+        for i, item in enumerate(ideas):
+            col_status, col_text, col_actions = st.columns([1, 6, 3])
+
+            with col_status:
+                if item.get("used"):
+                    st.markdown("✅")
+                else:
+                    st.markdown("⏳")
+
+            with col_text:
+                st.write(item["idea"])
+
+            with col_actions:
+                btn_col1, btn_col2 = st.columns(2)
+                with btn_col1:
+                    if item.get("used") and st.button("🔄", key=f"reset_{i}", help="Сбросить статус"):
+                        ideas[i]["used"] = False
+                        save_json(IDEAS_FILE, ideas)
+                        st.rerun()
+                with btn_col2:
+                    if st.button("🗑️", key=f"del_{i}", help="Удалить"):
+                        ideas.pop(i)
+                        save_json(IDEAS_FILE, ideas)
+                        st.rerun()
+
+    st.divider()
+    st.caption(f"Всего идей: {len(ideas)} | Неиспользованных: {sum(1 for i in ideas if not i.get('used'))}")
+
+# ── Tab: History ─────────────────────────────────────────────────────────────
+
+with tab_history:
+    st.header("📊 История публикаций")
+
+    history = load_json(HISTORY_FILE, [])
+
+    if not history:
+        st.info("Пока нет опубликованных постов.")
+    else:
+        for entry in reversed(history):
+            with st.expander(f"📅 {entry['date'][:16]} — {entry.get('idea', 'N/A')}", expanded=False):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(f"**Идея:** {entry.get('idea', 'N/A')}")
+                    st.markdown(f"**Текст (провайдер):** `{entry.get('text_provider', 'N/A')}`")
+                    st.markdown(f"**Картинка (провайдер):** `{entry.get('image_provider', 'N/A')}`")
+                with col2:
+                    st.markdown(f"**Message ID:** `{entry.get('message_id', 'N/A')}`")
+                    st.markdown(f"**Дата:** {entry.get('date', 'N/A')}")
+
+                if entry.get("post_text"):
+                    st.text_area("Текст поста", value=entry["post_text"], height=100, disabled=True,
+                                 key=f"hist_{entry.get('message_id', id(entry))}")
+
+        st.caption(f"Всего публикаций: {len(history)}")
+
+# ── Tab: Auto-publish ────────────────────────────────────────────────────────
+
+with tab_auto:
+    st.header("⏰ Автопубликация")
+
+    st.subheader("Запуск по расписанию (cron)")
+    st.markdown("""
+Для автоматической публикации по расписанию добавьте в crontab:
+
+```bash
+crontab -e
+```
+
+Пример — каждый день в 10:00:
+```
+0 10 * * * cd /path/to/project && /path/to/venv/bin/python main.py >> autoposter.log 2>&1
+```
+    """)
+
+    st.divider()
+    st.subheader("Ручной запуск")
+    st.caption("Опубликовать следующую неиспользованную идею прямо сейчас")
+
+    ideas = load_json(IDEAS_FILE, [])
+    next_idea = None
+    for item in ideas:
+        if not item.get("used"):
+            next_idea = item["idea"]
+            break
+
+    if next_idea:
+        st.info(f"Следующая идея: **{next_idea}**")
+
+        if st.button("🚀 Опубликовать сейчас", use_container_width=True, type="primary"):
+            env = load_env_values()
+            prompts = load_prompts()
+
+            if not env.get("TELEGRAM_BOT_TOKEN") or not env.get("TELEGRAM_CHANNEL_ID"):
+                st.error("Заполните Telegram настройки в сайдбаре!")
+            else:
+                progress = st.progress(0, text="Генерирую текст...")
+                try:
+                    post_text, image_prompt = generate_post(
+                        next_idea,
+                        provider=env.get("TEXT_PROVIDER", "claude"),
+                        system_prompt=prompts["system_prompt"],
+                        image_prompt_template=prompts["image_prompt_template"],
+                    )
+                    progress.progress(33, text="Генерирую картинку...")
+
+                    image_path = generate_image(
+                        image_prompt,
+                        provider=env.get("IMAGE_PROVIDER", "gemini"),
+                    )
+                    progress.progress(66, text="Публикую в Telegram...")
+
+                    result = send_post(
+                        image_path,
+                        post_text,
+                        bot_token=env.get("TELEGRAM_BOT_TOKEN"),
+                        channel_id=env.get("TELEGRAM_CHANNEL_ID"),
+                    )
+                    msg_id = result["result"]["message_id"]
+                    progress.progress(100, text="Готово!")
+
+                    # Mark used
+                    for item in ideas:
+                        if item["idea"] == next_idea and not item.get("used"):
+                            item["used"] = True
+                            break
+                    save_json(IDEAS_FILE, ideas)
+
+                    # History
+                    history = load_json(HISTORY_FILE, [])
+                    history.append({
+                        "date": datetime.now().isoformat(),
+                        "idea": next_idea,
+                        "post_text": post_text[:200],
+                        "text_provider": env.get("TEXT_PROVIDER", ""),
+                        "image_provider": env.get("IMAGE_PROVIDER", ""),
+                        "message_id": msg_id,
+                    })
+                    save_json(HISTORY_FILE, history)
+
+                    # Cleanup
+                    try:
+                        os.remove(image_path)
+                    except OSError:
+                        pass
+
+                    st.success(f"Опубликовано! message_id: {msg_id}")
+
+                except Exception as e:
+                    st.error(f"Ошибка: {e}")
+    else:
+        st.warning("Нет неиспользованных идей. Добавьте новые во вкладке «Идеи».")

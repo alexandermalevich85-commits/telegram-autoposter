@@ -4,7 +4,7 @@ from google import genai
 
 from config import TEXT_PROVIDER, CLAUDE_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY
 
-SYSTEM_PROMPT = """\
+DEFAULT_SYSTEM_PROMPT = """\
 Ты — эксперт по естественному омоложению лица. Ты ведёшь Telegram-канал и пишешь \
 увлекательные, полезные посты для женщин 30-55 лет.
 
@@ -28,10 +28,15 @@ IMAGE_PROMPT:
 без текста на картинке, в стиле профессиональной фотографии>\
 """
 
+DEFAULT_IMAGE_PROMPT_TEMPLATE = (
+    "Beautiful aesthetic photo related to facial rejuvenation and {idea}, "
+    "professional photography, soft lighting, skincare"
+)
+
 USER_MESSAGE = "Напиши пост на тему: {idea}"
 
 
-def _parse_response(response_text: str, idea: str) -> tuple[str, str]:
+def _parse_response(response_text: str, idea: str, image_prompt_template: str | None = None) -> tuple[str, str]:
     """Parse POST: and IMAGE_PROMPT: sections from model response."""
     if "POST:" in response_text and "IMAGE_PROMPT:" in response_text:
         parts = response_text.split("IMAGE_PROMPT:")
@@ -39,44 +44,45 @@ def _parse_response(response_text: str, idea: str) -> tuple[str, str]:
         image_prompt = parts[1].strip()
     else:
         post_text = response_text.strip()
-        image_prompt = (
-            f"Beautiful aesthetic photo related to facial rejuvenation and {idea}, "
-            f"professional photography, soft lighting, skincare"
-        )
+        template = image_prompt_template or DEFAULT_IMAGE_PROMPT_TEMPLATE
+        image_prompt = template.format(idea=idea)
     return post_text, image_prompt
 
 
-def _generate_claude(idea: str) -> tuple[str, str]:
-    client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
+def _generate_claude(idea: str, system_prompt: str, image_prompt_template: str | None, api_key: str | None) -> tuple[str, str]:
+    key = api_key or CLAUDE_API_KEY
+    client = anthropic.Anthropic(api_key=key)
     message = client.messages.create(
         model="claude-sonnet-4-5-20250929",
         max_tokens=1500,
-        system=SYSTEM_PROMPT,
+        system=system_prompt,
         messages=[{"role": "user", "content": USER_MESSAGE.format(idea=idea)}],
     )
-    return _parse_response(message.content[0].text, idea)
+    return _parse_response(message.content[0].text, idea, image_prompt_template)
 
 
-def _generate_gemini(idea: str) -> tuple[str, str]:
-    client = genai.Client(api_key=GEMINI_API_KEY)
+def _generate_gemini(idea: str, system_prompt: str, image_prompt_template: str | None, api_key: str | None) -> tuple[str, str]:
+    key = api_key or GEMINI_API_KEY
+    client = genai.Client(api_key=key)
     response = client.models.generate_content(
         model="gemini-2.5-flash-preview-04-17",
-        contents=f"{SYSTEM_PROMPT}\n\n{USER_MESSAGE.format(idea=idea)}",
+        contents=f"{system_prompt}\n\n{USER_MESSAGE.format(idea=idea)}",
     )
-    return _parse_response(response.text, idea)
+    return _parse_response(response.text, idea, image_prompt_template)
 
 
-def _generate_openai(idea: str) -> tuple[str, str]:
-    client = openai.OpenAI(api_key=OPENAI_API_KEY)
+def _generate_openai(idea: str, system_prompt: str, image_prompt_template: str | None, api_key: str | None) -> tuple[str, str]:
+    key = api_key or OPENAI_API_KEY
+    client = openai.OpenAI(api_key=key)
     response = client.chat.completions.create(
         model="gpt-4o",
         max_tokens=1500,
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": USER_MESSAGE.format(idea=idea)},
         ],
     )
-    return _parse_response(response.choices[0].message.content, idea)
+    return _parse_response(response.choices[0].message.content, idea, image_prompt_template)
 
 
 _PROVIDERS = {
@@ -86,18 +92,33 @@ _PROVIDERS = {
 }
 
 
-def generate_post(idea: str) -> tuple[str, str]:
+def generate_post(
+    idea: str,
+    provider: str | None = None,
+    system_prompt: str | None = None,
+    image_prompt_template: str | None = None,
+    api_key: str | None = None,
+) -> tuple[str, str]:
     """Generate a Telegram post text and image prompt from an idea.
 
-    Uses the provider specified by TEXT_PROVIDER in .env.
+    Args:
+        idea: The topic/idea for the post.
+        provider: Override TEXT_PROVIDER from config (claude/gemini/openai).
+        system_prompt: Override the default system prompt.
+        image_prompt_template: Override the fallback image prompt template.
+            Use {idea} placeholder for the topic.
+        api_key: Override the API key from config.
 
     Returns:
         Tuple of (post_text, image_prompt).
     """
-    provider_fn = _PROVIDERS.get(TEXT_PROVIDER)
+    prov = provider or TEXT_PROVIDER
+    prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
+
+    provider_fn = _PROVIDERS.get(prov)
     if provider_fn is None:
         raise ValueError(
-            f"Unknown TEXT_PROVIDER: '{TEXT_PROVIDER}'. "
+            f"Unknown TEXT_PROVIDER: '{prov}'. "
             f"Use one of: {', '.join(_PROVIDERS)}"
         )
-    return provider_fn(idea)
+    return provider_fn(idea, prompt, image_prompt_template, api_key)

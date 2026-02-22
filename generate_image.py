@@ -19,8 +19,9 @@ def _save_to_temp(image: Image.Image) -> str:
     return path
 
 
-def _generate_gemini(prompt: str) -> str:
-    client = genai.Client(api_key=GEMINI_API_KEY)
+def _generate_gemini(prompt: str, api_key: str | None) -> str:
+    key = api_key or GEMINI_API_KEY
+    client = genai.Client(api_key=key)
     response = client.models.generate_content(
         model="gemini-2.5-flash-preview-04-17",
         contents=prompt,
@@ -37,8 +38,9 @@ def _generate_gemini(prompt: str) -> str:
     raise RuntimeError("Gemini API did not return an image")
 
 
-def _generate_openai(prompt: str) -> str:
-    client = openai.OpenAI(api_key=OPENAI_API_KEY)
+def _generate_openai(prompt: str, api_key: str | None) -> str:
+    key = api_key or OPENAI_API_KEY
+    client = openai.OpenAI(api_key=key)
     response = client.images.generate(
         model="dall-e-3",
         prompt=prompt,
@@ -59,18 +61,27 @@ _PROVIDERS = {
 }
 
 
-def generate_image(prompt: str) -> str:
+def generate_image(
+    prompt: str,
+    provider: str | None = None,
+    api_key: str | None = None,
+) -> str:
     """Generate an image from a text prompt.
 
-    Uses the provider specified by IMAGE_PROVIDER in .env.
+    Args:
+        prompt: Text description for the image.
+        provider: Override IMAGE_PROVIDER from config (gemini/openai).
+        api_key: Override the API key from config.
 
     Returns:
         Path to the saved PNG file.
     """
-    provider_fn = _PROVIDERS.get(IMAGE_PROVIDER)
+    prov = provider or IMAGE_PROVIDER
+
+    provider_fn = _PROVIDERS.get(prov)
     if provider_fn is None:
         raise ValueError(
-            f"Unknown IMAGE_PROVIDER: '{IMAGE_PROVIDER}'. "
+            f"Unknown IMAGE_PROVIDER: '{prov}'. "
             f"Use one of: {', '.join(_PROVIDERS)}"
         )
-    return provider_fn(prompt)
+    return provider_fn(prompt, api_key)
