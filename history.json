@@ -1,1 +1,10 @@
-[]
+[
+  {
+    "date": "2026-02-23T17:22:55",
+    "idea": "Как убрать носогубные складки без инъекций",
+    "post_text": "(пост опубликован через GitHub Actions, текст не сохранён из-за ошибки push)",
+    "text_provider": "openai",
+    "image_provider": "openai",
+    "message_id": 47
+  }
+]
