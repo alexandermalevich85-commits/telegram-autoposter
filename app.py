@@ -452,7 +452,10 @@ with tab_ideas:
                     st.markdown("⏳")
 
             with col_text:
-                st.write(item["idea"])
+                if item.get("used"):
+                    st.markdown(f"~~{item['idea']}~~")
+                else:
+                    st.write(item["idea"])
 
             with col_actions:
                 btn_col1, btn_col2 = st.columns(2)
