@@ -146,6 +146,10 @@ st.set_page_config(
 
 st.title("📱 Автопостер для Telegram")
 
+# Show flash messages saved before st.rerun()
+if st.session_state.pop("_flash_success", None):
+    st.success(st.session_state.pop("_flash_msg", "Готово!"))
+
 # ── Sidebar — Settings ──────────────────────────────────────────────────────
 
 with st.sidebar:
@@ -399,6 +403,11 @@ with tab_create:
                             st.session_state.pop("image_prompt", None)
                             st.session_state.pop("idea", None)
 
+                            # Flash + rerun so history tab shows the new entry
+                            st.session_state["_flash_success"] = True
+                            st.session_state["_flash_msg"] = f"✅ Опубликовано! message_id: {msg_id}"
+                            st.rerun()
+
                         except Exception as e:
                             st.error(f"Ошибка публикации: {e}")
 
@@ -509,7 +518,7 @@ crontab -e
 
     st.divider()
     st.subheader("Ручной запуск")
-    st.caption("Опубликовать следующую неиспользованную идею прямо сейчас")
+    st.caption("Сгенерировать пост из следующей идеи, просмотреть и опубликовать")
 
     ideas = load_json(IDEAS_FILE, [])
     next_idea = None
@@ -521,66 +530,154 @@ crontab -e
     if next_idea:
         st.info(f"Следующая идея: **{next_idea}**")
 
-        if st.button("🚀 Опубликовать сейчас", use_container_width=True, type="primary"):
+        # Step 1: Generate (with preview)
+        if st.button("🎨 Сгенерировать пост", key="auto_generate", use_container_width=True):
             env = load_env_values()
             prompts = load_prompts()
 
             if not env.get("TELEGRAM_BOT_TOKEN") or not env.get("TELEGRAM_CHANNEL_ID"):
                 st.error("Заполните Telegram настройки в сайдбаре!")
             else:
-                progress = st.progress(0, text="Генерирую текст...")
-                try:
-                    post_text, image_prompt = generate_post(
-                        next_idea,
-                        provider=env.get("TEXT_PROVIDER", "claude"),
-                        system_prompt=prompts["system_prompt"],
-                        image_prompt_template=prompts["image_prompt_template"],
-                    )
-                    progress.progress(33, text="Генерирую картинку...")
-
-                    image_path = generate_image(
-                        image_prompt,
-                        provider=env.get("IMAGE_PROVIDER", "gemini"),
-                    )
-                    progress.progress(66, text="Публикую в Telegram...")
-
-                    result = send_post(
-                        image_path,
-                        post_text,
-                        bot_token=env.get("TELEGRAM_BOT_TOKEN"),
-                        channel_id=env.get("TELEGRAM_CHANNEL_ID"),
-                    )
-                    msg_id = result["result"]["message_id"]
-                    progress.progress(100, text="Готово!")
-
-                    # Mark used
-                    for item in ideas:
-                        if item["idea"] == next_idea and not item.get("used"):
-                            item["used"] = True
-                            break
-                    save_json(IDEAS_FILE, ideas)
-
-                    # History
-                    history = load_json(HISTORY_FILE, [])
-                    history.append({
-                        "date": datetime.now().isoformat(),
-                        "idea": next_idea,
-                        "post_text": post_text[:200],
-                        "text_provider": env.get("TEXT_PROVIDER", ""),
-                        "image_provider": env.get("IMAGE_PROVIDER", ""),
-                        "message_id": msg_id,
-                    })
-                    save_json(HISTORY_FILE, history)
-
-                    # Cleanup
+                with st.spinner("Генерирую текст..."):
                     try:
-                        os.remove(image_path)
-                    except OSError:
-                        pass
+                        post_text, image_prompt = generate_post(
+                            next_idea,
+                            provider=env.get("TEXT_PROVIDER", "claude"),
+                            system_prompt=prompts["system_prompt"],
+                            image_prompt_template=prompts["image_prompt_template"],
+                        )
+                        st.session_state["auto_post_text"] = post_text
+                        st.session_state["auto_image_prompt"] = image_prompt
+                        st.session_state["auto_idea"] = next_idea
+                    except Exception as e:
+                        st.error(f"Ошибка генерации текста: {e}")
 
-                    st.success(f"Опубликовано! message_id: {msg_id}")
+                if "auto_image_prompt" in st.session_state:
+                    with st.spinner("Генерирую картинку..."):
+                        try:
+                            image_path = generate_image(
+                                st.session_state["auto_image_prompt"],
+                                provider=env.get("IMAGE_PROVIDER", "gemini"),
+                            )
+                            st.session_state["auto_image_path"] = image_path
+                        except Exception as e:
+                            st.error(f"Ошибка генерации картинки: {e}")
 
-                except Exception as e:
-                    st.error(f"Ошибка: {e}")
+        # Step 2: Preview
+        if "auto_post_text" in st.session_state:
+            st.divider()
+            st.subheader("📋 Превью поста")
+
+            col_text, col_img = st.columns([3, 2])
+
+            with col_text:
+                auto_edited_text = st.text_area(
+                    "Текст поста (можно редактировать)",
+                    value=st.session_state["auto_post_text"],
+                    height=300,
+                    key="auto_text_editor",
+                )
+                st.session_state["auto_post_text"] = auto_edited_text
+
+                st.caption("Предпросмотр HTML:")
+                st.markdown(
+                    auto_edited_text.replace("<b>", "**").replace("</b>", "**")
+                    .replace("<i>", "*").replace("</i>", "*"),
+                    unsafe_allow_html=True,
+                )
+
+            with col_img:
+                if "auto_image_path" in st.session_state and os.path.exists(st.session_state["auto_image_path"]):
+                    st.image(st.session_state["auto_image_path"], caption="Сгенерированная картинка", use_container_width=True)
+
+                auto_edited_img_prompt = st.text_area(
+                    "Промпт для картинки (можно изменить)",
+                    value=st.session_state.get("auto_image_prompt", ""),
+                    height=100,
+                    key="auto_img_prompt_editor",
+                )
+                st.session_state["auto_image_prompt"] = auto_edited_img_prompt
+
+                if st.button("🔄 Перегенерировать картинку", key="auto_regen_img"):
+                    env = load_env_values()
+                    with st.spinner("Генерирую новую картинку..."):
+                        try:
+                            old_path = st.session_state.get("auto_image_path")
+                            if old_path and os.path.exists(old_path):
+                                os.remove(old_path)
+                            image_path = generate_image(
+                                st.session_state["auto_image_prompt"],
+                                provider=env.get("IMAGE_PROVIDER", "gemini"),
+                            )
+                            st.session_state["auto_image_path"] = image_path
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Ошибка: {e}")
+
+            # Step 3: Publish or regenerate
+            st.divider()
+            col_pub, col_regen = st.columns(2)
+
+            with col_pub:
+                if st.button("📤 Опубликовать в Telegram", key="auto_publish", use_container_width=True, type="primary"):
+                    env = load_env_values()
+                    if "auto_image_path" not in st.session_state:
+                        st.error("Сначала сгенерируйте картинку!")
+                    else:
+                        with st.spinner("Публикую..."):
+                            try:
+                                result = send_post(
+                                    st.session_state["auto_image_path"],
+                                    st.session_state["auto_post_text"],
+                                    bot_token=env.get("TELEGRAM_BOT_TOKEN"),
+                                    channel_id=env.get("TELEGRAM_CHANNEL_ID"),
+                                )
+                                msg_id = result["result"]["message_id"]
+
+                                # Mark used
+                                current_idea = st.session_state.get("auto_idea", "")
+                                for item in ideas:
+                                    if item["idea"] == current_idea and not item.get("used"):
+                                        item["used"] = True
+                                        break
+                                save_json(IDEAS_FILE, ideas)
+
+                                # History
+                                history = load_json(HISTORY_FILE, [])
+                                history.append({
+                                    "date": datetime.now().isoformat(),
+                                    "idea": current_idea,
+                                    "post_text": st.session_state["auto_post_text"][:200],
+                                    "text_provider": env.get("TEXT_PROVIDER", ""),
+                                    "image_provider": env.get("IMAGE_PROVIDER", ""),
+                                    "message_id": msg_id,
+                                })
+                                save_json(HISTORY_FILE, history)
+
+                                # Cleanup
+                                old_path = st.session_state.pop("auto_image_path", None)
+                                if old_path and os.path.exists(old_path):
+                                    os.remove(old_path)
+                                st.session_state.pop("auto_post_text", None)
+                                st.session_state.pop("auto_image_prompt", None)
+                                st.session_state.pop("auto_idea", None)
+
+                                # Flash + rerun so history tab shows the new entry
+                                st.session_state["_flash_success"] = True
+                                st.session_state["_flash_msg"] = f"✅ Опубликовано! message_id: {msg_id}"
+                                st.rerun()
+
+                            except Exception as e:
+                                st.error(f"Ошибка публикации: {e}")
+
+            with col_regen:
+                if st.button("🔄 Перегенерировать всё", key="auto_regen_all", use_container_width=True):
+                    old_path = st.session_state.pop("auto_image_path", None)
+                    if old_path and os.path.exists(old_path):
+                        os.remove(old_path)
+                    st.session_state.pop("auto_post_text", None)
+                    st.session_state.pop("auto_image_prompt", None)
+                    st.rerun()
+
     else:
         st.warning("Нет неиспользованных идей. Добавьте новые во вкладке «Идеи».")
