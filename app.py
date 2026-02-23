@@ -7,6 +7,20 @@ import requests as http_requests
 import streamlit as st
 from PIL import Image
 
+# Bridge st.secrets → os.environ BEFORE importing project modules
+# so that config.py (which uses os.getenv) picks up Streamlit Cloud secrets.
+_SECRET_KEYS = [
+    "TEXT_PROVIDER", "IMAGE_PROVIDER",
+    "CLAUDE_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY",
+    "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHANNEL_ID", "GITHUB_TOKEN",
+]
+try:
+    for _k in _SECRET_KEYS:
+        if _k in st.secrets and not os.environ.get(_k):
+            os.environ[_k] = str(st.secrets[_k])
+except Exception:
+    pass
+
 from generate_text import generate_post, DEFAULT_SYSTEM_PROMPT, DEFAULT_IMAGE_PROMPT_TEMPLATE
 from generate_image import generate_image
 from post_telegram import send_post

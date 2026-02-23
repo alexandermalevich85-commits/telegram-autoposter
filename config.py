@@ -1,17 +1,21 @@
 import os
-from dotenv import load_dotenv
 
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 
 def _get(key: str, default: str = "") -> str:
-    """Get config value: st.secrets (Streamlit Cloud) → .env (local) → default."""
-    try:
-        import streamlit as st
-        if key in st.secrets:
-            return str(st.secrets[key])
-    except Exception:
-        pass
+    """Get config value from environment variables.
+
+    On Streamlit Cloud the secrets are bridged into os.environ by app.py
+    before this module is imported, so os.getenv() works everywhere:
+      - Local dev: .env → load_dotenv() → os.getenv()
+      - Streamlit Cloud: st.secrets → os.environ (bridged in app.py) → os.getenv()
+      - GitHub Actions: env vars set directly → os.getenv()
+    """
     return os.getenv(key, default)
 
 
