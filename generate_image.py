@@ -2,10 +2,7 @@ import io
 import os
 import tempfile
 
-import openai
 import requests
-from google import genai
-from google.genai import types
 from PIL import Image
 
 from config import IMAGE_PROVIDER, GEMINI_API_KEY, OPENAI_API_KEY
@@ -20,6 +17,8 @@ def _save_to_temp(image: Image.Image) -> str:
 
 
 def _generate_gemini(prompt: str, api_key: str | None) -> str:
+    from google import genai
+    from google.genai import types
     key = api_key or GEMINI_API_KEY
     client = genai.Client(api_key=key)
     response = client.models.generate_content(
@@ -39,6 +38,7 @@ def _generate_gemini(prompt: str, api_key: str | None) -> str:
 
 
 def _generate_openai(prompt: str, api_key: str | None) -> str:
+    import openai
     key = api_key or OPENAI_API_KEY
     client = openai.OpenAI(api_key=key)
     response = client.images.generate(

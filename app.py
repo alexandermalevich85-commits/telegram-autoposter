@@ -33,14 +33,14 @@ def _get_github_token() -> str:
     return os.getenv("GITHUB_TOKEN", "")
 
 
-def update_github_provider_cfg(text_provider: str, image_provider: str) -> bool:
+def update_github_provider_cfg(text_provider: str, image_provider: str) -> tuple[bool, str]:
     """Update provider.cfg in GitHub repo via Contents API.
 
-    Returns True on success, False on failure.
+    Returns (True, "") on success, (False, error_message) on failure.
     """
     token = _get_github_token()
     if not token:
-        return False
+        return False, "GITHUB_TOKEN не задан"
 
     api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{PROVIDER_CFG_PATH}"
     headers = {
@@ -53,6 +53,12 @@ def update_github_provider_cfg(text_provider: str, image_provider: str) -> bool:
     resp = http_requests.get(api_url, headers=headers, timeout=10)
     if resp.status_code == 200:
         sha = resp.json().get("sha")
+    elif resp.status_code == 404:
+        # File doesn't exist yet — will be created
+        sha = None
+    else:
+        msg = resp.json().get("message", resp.text) if resp.text else f"HTTP {resp.status_code}"
+        return False, f"Ошибка чтения файла (HTTP {resp.status_code}): {msg}"
 
     # Build new content
     new_content = f"TEXT_PROVIDER={text_provider}\nIMAGE_PROVIDER={image_provider}\n"
@@ -66,7 +72,10 @@ def update_github_provider_cfg(text_provider: str, image_provider: str) -> bool:
         payload["sha"] = sha
 
     resp = http_requests.put(api_url, headers=headers, json=payload, timeout=10)
-    return resp.status_code in (200, 201)
+    if resp.status_code in (200, 201):
+        return True, ""
+    msg = resp.json().get("message", resp.text) if resp.text else f"HTTP {resp.status_code}"
+    return False, f"HTTP {resp.status_code}: {msg}"
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -173,11 +182,11 @@ with st.sidebar:
         # Sync providers to GitHub for scheduled runs
         if _get_github_token():
             try:
-                ok = update_github_provider_cfg(text_prov, image_prov)
+                ok, err = update_github_provider_cfg(text_prov, image_prov)
                 if ok:
                     st.success("Провайдеры синхронизированы с GitHub ✅")
                 else:
-                    st.warning("Не удалось обновить provider.cfg на GitHub")
+                    st.warning(f"Не удалось обновить provider.cfg на GitHub: {err}")
             except Exception as e:
                 st.warning(f"Ошибка синхронизации с GitHub: {e}")
         else:

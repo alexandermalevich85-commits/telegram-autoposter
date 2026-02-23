@@ -1,7 +1,3 @@
-import anthropic
-import openai
-from google import genai
-
 from config import TEXT_PROVIDER, CLAUDE_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY
 
 DEFAULT_SYSTEM_PROMPT = """\
@@ -50,6 +46,7 @@ def _parse_response(response_text: str, idea: str, image_prompt_template: str | 
 
 
 def _generate_claude(idea: str, system_prompt: str, image_prompt_template: str | None, api_key: str | None) -> tuple[str, str]:
+    import anthropic
     key = api_key or CLAUDE_API_KEY
     client = anthropic.Anthropic(api_key=key)
     message = client.messages.create(
@@ -62,6 +59,7 @@ def _generate_claude(idea: str, system_prompt: str, image_prompt_template: str |
 
 
 def _generate_gemini(idea: str, system_prompt: str, image_prompt_template: str | None, api_key: str | None) -> tuple[str, str]:
+    from google import genai
     key = api_key or GEMINI_API_KEY
     client = genai.Client(api_key=key)
     response = client.models.generate_content(
@@ -72,6 +70,7 @@ def _generate_gemini(idea: str, system_prompt: str, image_prompt_template: str |
 
 
 def _generate_openai(idea: str, system_prompt: str, image_prompt_template: str | None, api_key: str | None) -> tuple[str, str]:
+    import openai
     key = api_key or OPENAI_API_KEY
     client = openai.OpenAI(api_key=key)
     response = client.chat.completions.create(
