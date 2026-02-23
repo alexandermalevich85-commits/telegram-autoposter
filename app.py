@@ -1,6 +1,8 @@
 import base64
+import io
 import json
 import os
+import tempfile
 from datetime import datetime
 
 import requests as http_requests
@@ -33,8 +35,9 @@ ENV_FILE = os.path.join(BASE_DIR, ".env")
 
 GITHUB_REPO = "alexandermalevich85-commits/telegram-autoposter"
 PROVIDER_CFG_PATH = "provider.cfg"
+PENDING_POST_PATH = "pending_post.json"
 
-# ── GitHub sync ──────────────────────────────────────────────────────────────
+# ── GitHub API helpers ───────────────────────────────────────────────────────
 
 
 def _get_github_token() -> str:
@@ -47,52 +50,116 @@ def _get_github_token() -> str:
     return os.getenv("GITHUB_TOKEN", "")
 
 
-def update_github_provider_cfg(text_provider: str, image_provider: str) -> tuple[bool, str]:
-    """Update provider.cfg in GitHub repo via Contents API.
-
-    Returns (True, "") on success, (False, error_message) on failure.
-    """
+def _github_headers() -> dict | None:
+    """Build GitHub API headers. Returns None if no token."""
     token = _get_github_token()
     if not token:
-        return False, "GITHUB_TOKEN не задан"
-
-    api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{PROVIDER_CFG_PATH}"
-    headers = {
+        return None
+    return {
         "Authorization": f"token {token}",
         "Accept": "application/vnd.github.v3+json",
     }
 
-    # Get current file SHA (required for update)
-    sha = None
-    resp = http_requests.get(api_url, headers=headers, timeout=10)
-    if resp.status_code == 200:
-        sha = resp.json().get("sha")
-    elif resp.status_code == 404:
-        # File doesn't exist yet — will be created
-        sha = None
-    else:
-        msg = resp.json().get("message", resp.text) if resp.text else f"HTTP {resp.status_code}"
-        return False, f"Ошибка чтения файла (HTTP {resp.status_code}): {msg}"
 
-    # Build new content
-    new_content = f"TEXT_PROVIDER={text_provider}\nIMAGE_PROVIDER={image_provider}\n"
-    encoded = base64.b64encode(new_content.encode()).decode()
+def read_github_file(path: str) -> tuple[str | None, str | None]:
+    """Read a file from GitHub repo via Contents API.
 
-    payload = {
-        "message": f"Update providers: text={text_provider}, image={image_provider}",
-        "content": encoded,
-    }
+    Returns (content_string, sha) or (None, None) on failure.
+    """
+    headers = _github_headers()
+    if not headers:
+        return None, None
+    api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{path}"
+    try:
+        resp = http_requests.get(api_url, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            content = base64.b64decode(data["content"]).decode("utf-8")
+            sha = data["sha"]
+            return content, sha
+    except Exception:
+        pass
+    return None, None
+
+
+def write_github_file(
+    path: str,
+    content: str,
+    sha: str | None,
+    message: str,
+) -> tuple[bool, str]:
+    """Write a file to GitHub repo via Contents API.
+
+    Returns (True, "") on success, (False, error_message) on failure.
+    """
+    headers = _github_headers()
+    if not headers:
+        return False, "GITHUB_TOKEN не задан"
+
+    api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{path}"
+    encoded = base64.b64encode(content.encode("utf-8")).decode()
+    payload = {"message": message, "content": encoded}
     if sha:
         payload["sha"] = sha
 
-    resp = http_requests.put(api_url, headers=headers, json=payload, timeout=10)
-    if resp.status_code in (200, 201):
-        return True, ""
-    msg = resp.json().get("message", resp.text) if resp.text else f"HTTP {resp.status_code}"
-    return False, f"HTTP {resp.status_code}: {msg}"
+    try:
+        resp = http_requests.put(api_url, headers=headers, json=payload, timeout=30)
+        if resp.status_code in (200, 201):
+            return True, ""
+        msg = resp.json().get("message", resp.text) if resp.text else f"HTTP {resp.status_code}"
+        return False, f"HTTP {resp.status_code}: {msg}"
+    except Exception as e:
+        return False, str(e)
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+def update_github_provider_cfg(
+    text_provider: str,
+    image_provider: str,
+    autopublish_enabled: bool | None = None,
+) -> tuple[bool, str]:
+    """Update provider.cfg in GitHub repo.
+
+    Returns (True, "") on success, (False, error_message) on failure.
+    """
+    # Read current file to get SHA
+    content, sha = read_github_file(PROVIDER_CFG_PATH)
+
+    # Determine current autopublish state if not explicitly set
+    if autopublish_enabled is None:
+        autopublish_enabled = True
+        if content:
+            for line in content.strip().split("\n"):
+                if line.startswith("AUTOPUBLISH_ENABLED="):
+                    autopublish_enabled = line.split("=", 1)[1].strip().lower() != "false"
+
+    enabled_str = "true" if autopublish_enabled else "false"
+    new_content = (
+        f"TEXT_PROVIDER={text_provider}\n"
+        f"IMAGE_PROVIDER={image_provider}\n"
+        f"AUTOPUBLISH_ENABLED={enabled_str}\n"
+    )
+
+    return write_github_file(
+        PROVIDER_CFG_PATH,
+        new_content,
+        sha,
+        f"Update config: text={text_provider}, image={image_provider}, autopublish={enabled_str}",
+    )
+
+
+def read_provider_cfg_from_github() -> dict:
+    """Read provider.cfg from GitHub and parse it. Returns dict of values."""
+    content, _ = read_github_file(PROVIDER_CFG_PATH)
+    result = {}
+    if content:
+        for line in content.strip().split("\n"):
+            if "=" in line:
+                key, _, val = line.partition("=")
+                result[key.strip()] = val.strip()
+    return result
+
+
+# ── Local helpers ────────────────────────────────────────────────────────────
 
 
 def load_json(path: str, default=None):
@@ -134,6 +201,29 @@ def load_env_values() -> dict:
                     key, _, val = line.partition("=")
                     values[key.strip()] = val.strip()
     return values
+
+
+def image_to_base64(image_path: str) -> str:
+    """Compress image to JPEG q85 and return base64 string."""
+    img = Image.open(image_path)
+    buf = io.BytesIO()
+    img.convert("RGB").save(buf, format="JPEG", quality=85)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def base64_to_bytes(b64_string: str) -> bytes:
+    """Decode base64 string to raw bytes."""
+    return base64.b64decode(b64_string)
+
+
+def base64_to_tempfile(b64_string: str) -> str:
+    """Decode base64 to a temporary JPEG file, return path."""
+    data = base64.b64decode(b64_string)
+    fd, path = tempfile.mkstemp(suffix=".jpg", prefix="autoposter_")
+    os.close(fd)
+    with open(path, "wb") as f:
+        f.write(data)
+    return path
 
 
 # ── Page config ──────────────────────────────────────────────────────────────
@@ -372,7 +462,6 @@ with tab_create:
                                 channel_id=env.get("TELEGRAM_CHANNEL_ID"),
                             )
                             msg_id = result["result"]["message_id"]
-                            st.success(f"Опубликовано! message_id: {msg_id}")
 
                             # Mark idea as used
                             current_idea = st.session_state.get("idea", "")
@@ -403,7 +492,6 @@ with tab_create:
                             st.session_state.pop("image_prompt", None)
                             st.session_state.pop("idea", None)
 
-                            # Flash + rerun so history tab shows the new entry
                             st.session_state["_flash_success"] = True
                             st.session_state["_flash_msg"] = f"✅ Опубликовано! message_id: {msg_id}"
                             st.rerun()
@@ -518,182 +606,360 @@ with tab_history:
 with tab_auto:
     st.header("⏰ Автопубликация")
 
-    st.subheader("Запуск по расписанию (cron)")
-    st.markdown("""
-Для автоматической публикации по расписанию добавьте в crontab:
+    # ── Toggle: enable / disable ─────────────────────────────────────────────
 
-```bash
-crontab -e
-```
+    github_cfg = read_provider_cfg_from_github()
+    current_enabled = github_cfg.get("AUTOPUBLISH_ENABLED", "true").lower() != "false"
 
-Пример — каждый день в 10:00:
-```
-0 10 * * * cd /path/to/project && /path/to/venv/bin/python main.py >> autoposter.log 2>&1
-```
-    """)
+    st.subheader("🔘 Управление")
+
+    new_enabled = st.toggle(
+        "Ежедневная автопубликация включена",
+        value=current_enabled,
+        key="autopublish_toggle",
+    )
+
+    # Detect toggle change
+    if new_enabled != current_enabled:
+        with st.spinner("Обновляю настройку на GitHub..."):
+            ok, err = update_github_provider_cfg(
+                github_cfg.get("TEXT_PROVIDER", "openai"),
+                github_cfg.get("IMAGE_PROVIDER", "openai"),
+                autopublish_enabled=new_enabled,
+            )
+            if ok:
+                st.success("✅ Автопубликация " + ("включена" if new_enabled else "выключена"))
+                st.rerun()
+            else:
+                st.error(f"Ошибка обновления: {err}")
+
+    if new_enabled:
+        st.info(
+            "📅 **Расписание:**\n"
+            "- **08:00 МСК** — генерация черновика (текст + картинка)\n"
+            "- **08:00–18:00** — вы можете просмотреть, отредактировать и опубликовать вручную\n"
+            "- **18:00 МСК** — если не опубликовано вручную, пост уйдёт автоматически"
+        )
+    else:
+        st.warning("⏸️ Автопубликация выключена. Посты не будут генерироваться и публиковаться автоматически.")
 
     st.divider()
-    st.subheader("Ручной запуск")
-    st.caption("Сгенерировать пост из следующей идеи, просмотреть и опубликовать")
+
+    # ── Pending draft panel ──────────────────────────────────────────────────
+
+    st.subheader("📋 Черновик поста")
+
+    # Fetch pending_post.json from GitHub
+    pending_raw, pending_sha = read_github_file(PENDING_POST_PATH)
+
+    if pending_raw is None:
+        st.info("📭 Нет черновика. Следующий черновик будет сгенерирован в **08:00 МСК**.")
+    else:
+        try:
+            pending = json.loads(pending_raw)
+        except json.JSONDecodeError:
+            st.error("Ошибка чтения pending_post.json")
+            pending = None
+
+        if pending:
+            status = pending.get("status", "unknown")
+            created = pending.get("created_at", "")[:16]
+
+            if status == "published":
+                # ── Already published ────────────────────────────────────
+                published_by = pending.get("published_by", "?")
+                published_at = (pending.get("published_at") or "")[:16]
+                msg_id = pending.get("message_id", "?")
+                by_label = "вручную" if published_by == "manual" else "автоматически"
+
+                st.success(
+                    f"✅ Пост опубликован **{by_label}** "
+                    f"в {published_at} (message_id: {msg_id})"
+                )
+
+                with st.expander("Показать опубликованный пост", expanded=False):
+                    st.markdown(
+                        pending.get("post_text", "").replace("<b>", "**").replace("</b>", "**")
+                        .replace("<i>", "*").replace("</i>", "*"),
+                        unsafe_allow_html=True,
+                    )
+                    if pending.get("image_base64"):
+                        st.image(
+                            base64_to_bytes(pending["image_base64"]),
+                            caption="Картинка поста",
+                            use_container_width=True,
+                        )
+
+            elif status == "pending":
+                # ── Pending draft — editable ─────────────────────────────
+                st.warning(f"⏳ Черновик от **{created}** ожидает публикации")
+                st.caption(f"Идея: **{pending.get('idea', 'N/A')}** | "
+                           f"Провайдеры: текст — `{pending.get('text_provider')}`, "
+                           f"картинка — `{pending.get('image_provider')}`")
+
+                col_text, col_img = st.columns([3, 2])
+
+                with col_text:
+                    draft_text = st.text_area(
+                        "Текст поста (можно редактировать перед публикацией)",
+                        value=pending.get("post_text", ""),
+                        height=300,
+                        key="draft_text_editor",
+                    )
+
+                    st.caption("Предпросмотр HTML:")
+                    st.markdown(
+                        draft_text.replace("<b>", "**").replace("</b>", "**")
+                        .replace("<i>", "*").replace("</i>", "*"),
+                        unsafe_allow_html=True,
+                    )
+
+                with col_img:
+                    if pending.get("image_base64"):
+                        st.image(
+                            base64_to_bytes(pending["image_base64"]),
+                            caption="Сгенерированная картинка",
+                            use_container_width=True,
+                        )
+
+                    draft_img_prompt = st.text_area(
+                        "Промпт для картинки",
+                        value=pending.get("image_prompt", ""),
+                        height=100,
+                        key="draft_img_prompt_editor",
+                    )
+
+                    if st.button("🔄 Перегенерировать картинку", key="draft_regen_img"):
+                        env = load_env_values()
+                        with st.spinner("Генерирую новую картинку..."):
+                            try:
+                                new_image_path = generate_image(
+                                    draft_img_prompt,
+                                    provider=env.get("IMAGE_PROVIDER", "openai"),
+                                )
+                                new_b64 = image_to_base64(new_image_path)
+                                os.remove(new_image_path)
+
+                                # Update pending on GitHub
+                                pending["image_base64"] = new_b64
+                                pending["image_prompt"] = draft_img_prompt
+                                ok, err = write_github_file(
+                                    PENDING_POST_PATH,
+                                    json.dumps(pending, ensure_ascii=False, indent=2),
+                                    pending_sha,
+                                    "Update draft: regenerated image [manual]",
+                                )
+                                if ok:
+                                    st.success("Картинка обновлена!")
+                                    st.rerun()
+                                else:
+                                    st.error(f"Ошибка сохранения на GitHub: {err}")
+                            except Exception as e:
+                                st.error(f"Ошибка: {e}")
+
+                # ── Action buttons ───────────────────────────────────────
+                st.divider()
+                col_pub, col_save = st.columns(2)
+
+                with col_pub:
+                    if st.button("📤 Опубликовать в Telegram", key="draft_publish",
+                                 use_container_width=True, type="primary"):
+                        env = load_env_values()
+                        bot_token = env.get("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN", "")
+                        channel_id = env.get("TELEGRAM_CHANNEL_ID") or os.getenv("TELEGRAM_CHANNEL_ID", "")
+
+                        if not bot_token or not channel_id:
+                            st.error("Заполните Telegram настройки!")
+                        elif not pending.get("image_base64"):
+                            st.error("Нет картинки в черновике!")
+                        else:
+                            with st.spinner("Публикую..."):
+                                try:
+                                    # Decode image to temp file
+                                    tmp_path = base64_to_tempfile(pending["image_base64"])
+                                    try:
+                                        result = send_post(
+                                            tmp_path,
+                                            draft_text,
+                                            bot_token=bot_token,
+                                            channel_id=channel_id,
+                                        )
+                                        msg_id = result["result"]["message_id"]
+                                    finally:
+                                        try:
+                                            os.remove(tmp_path)
+                                        except OSError:
+                                            pass
+
+                                    # 1. Update pending_post.json on GitHub
+                                    pending["status"] = "published"
+                                    pending["published_at"] = datetime.now().isoformat()
+                                    pending["message_id"] = msg_id
+                                    pending["published_by"] = "manual"
+                                    pending["post_text"] = draft_text
+                                    ok1, err1 = write_github_file(
+                                        PENDING_POST_PATH,
+                                        json.dumps(pending, ensure_ascii=False, indent=2),
+                                        pending_sha,
+                                        f"Manual publish: message_id={msg_id} [manual]",
+                                    )
+
+                                    # 2. Update ideas.json on GitHub
+                                    ideas_raw, ideas_sha = read_github_file("ideas.json")
+                                    if ideas_raw:
+                                        ideas_data = json.loads(ideas_raw)
+                                        idx = pending.get("idea_index")
+                                        if idx is not None and idx < len(ideas_data):
+                                            ideas_data[idx]["used"] = True
+                                            write_github_file(
+                                                "ideas.json",
+                                                json.dumps(ideas_data, ensure_ascii=False, indent=2),
+                                                ideas_sha,
+                                                f"Mark idea #{idx} as used [manual]",
+                                            )
+
+                                    # 3. Update history.json on GitHub
+                                    hist_raw, hist_sha = read_github_file("history.json")
+                                    hist_data = json.loads(hist_raw) if hist_raw else []
+                                    hist_data.append({
+                                        "date": datetime.now().isoformat(),
+                                        "idea": pending.get("idea", ""),
+                                        "post_text": draft_text,
+                                        "text_provider": pending.get("text_provider", ""),
+                                        "image_provider": pending.get("image_provider", ""),
+                                        "message_id": msg_id,
+                                    })
+                                    write_github_file(
+                                        "history.json",
+                                        json.dumps(hist_data, ensure_ascii=False, indent=2),
+                                        hist_sha,
+                                        f"Add history entry for msg {msg_id} [manual]",
+                                    )
+
+                                    # Also update local files
+                                    local_ideas = load_json(IDEAS_FILE, [])
+                                    idx = pending.get("idea_index")
+                                    if idx is not None and idx < len(local_ideas):
+                                        local_ideas[idx]["used"] = True
+                                        save_json(IDEAS_FILE, local_ideas)
+
+                                    local_hist = load_json(HISTORY_FILE, [])
+                                    local_hist.append({
+                                        "date": datetime.now().isoformat(),
+                                        "idea": pending.get("idea", ""),
+                                        "post_text": draft_text,
+                                        "text_provider": pending.get("text_provider", ""),
+                                        "image_provider": pending.get("image_provider", ""),
+                                        "message_id": msg_id,
+                                    })
+                                    save_json(HISTORY_FILE, local_hist)
+
+                                    st.session_state["_flash_success"] = True
+                                    st.session_state["_flash_msg"] = f"✅ Опубликовано! message_id: {msg_id}"
+                                    st.rerun()
+
+                                except Exception as e:
+                                    st.error(f"Ошибка публикации: {e}")
+
+                with col_save:
+                    if st.button("💾 Сохранить изменения текста", key="draft_save_text",
+                                 use_container_width=True):
+                        pending["post_text"] = draft_text
+                        pending["image_prompt"] = draft_img_prompt
+                        ok, err = write_github_file(
+                            PENDING_POST_PATH,
+                            json.dumps(pending, ensure_ascii=False, indent=2),
+                            pending_sha,
+                            "Update draft text [manual]",
+                        )
+                        if ok:
+                            st.success("Текст черновика сохранён на GitHub!")
+                            st.rerun()
+                        else:
+                            st.error(f"Ошибка: {err}")
+
+            else:
+                st.info(f"Статус черновика: `{status}`")
+
+    # ── Manual generate (for testing) ────────────────────────────────────────
+
+    st.divider()
+    st.subheader("🧪 Ручная генерация черновика")
+    st.caption("Сгенерировать черновик прямо сейчас (для тестирования)")
 
     ideas = load_json(IDEAS_FILE, [])
     next_idea = None
-    for item in ideas:
+    next_idx = None
+    for i, item in enumerate(ideas):
         if not item.get("used"):
             next_idea = item["idea"]
+            next_idx = i
             break
 
     if next_idea:
         st.info(f"Следующая идея: **{next_idea}**")
 
-        # Step 1: Generate (with preview)
-        if st.button("🎨 Сгенерировать пост", key="auto_generate", use_container_width=True):
+        if st.button("🎨 Сгенерировать черновик", key="manual_gen", use_container_width=True):
             env = load_env_values()
             prompts = load_prompts()
 
-            if not env.get("TELEGRAM_BOT_TOKEN") or not env.get("TELEGRAM_CHANNEL_ID"):
-                st.error("Заполните Telegram настройки в сайдбаре!")
-            else:
-                with st.spinner("Генерирую текст..."):
+            with st.spinner("Генерирую текст..."):
+                try:
+                    post_text, image_prompt = generate_post(
+                        next_idea,
+                        provider=env.get("TEXT_PROVIDER", "openai"),
+                        system_prompt=prompts["system_prompt"],
+                        image_prompt_template=prompts["image_prompt_template"],
+                    )
+                except Exception as e:
+                    st.error(f"Ошибка генерации текста: {e}")
+                    post_text = None
+
+            if post_text:
+                with st.spinner("Генерирую картинку..."):
                     try:
-                        post_text, image_prompt = generate_post(
-                            next_idea,
-                            provider=env.get("TEXT_PROVIDER", "claude"),
-                            system_prompt=prompts["system_prompt"],
-                            image_prompt_template=prompts["image_prompt_template"],
+                        img_path = generate_image(
+                            image_prompt,
+                            provider=env.get("IMAGE_PROVIDER", "openai"),
                         )
-                        st.session_state["auto_post_text"] = post_text
-                        st.session_state["auto_image_prompt"] = image_prompt
-                        st.session_state["auto_idea"] = next_idea
+                        img_b64 = image_to_base64(img_path)
+                        os.remove(img_path)
                     except Exception as e:
-                        st.error(f"Ошибка генерации текста: {e}")
+                        st.error(f"Ошибка генерации картинки: {e}")
+                        img_b64 = None
 
-                if "auto_image_prompt" in st.session_state:
-                    with st.spinner("Генерирую картинку..."):
-                        try:
-                            image_path = generate_image(
-                                st.session_state["auto_image_prompt"],
-                                provider=env.get("IMAGE_PROVIDER", "gemini"),
-                            )
-                            st.session_state["auto_image_path"] = image_path
-                        except Exception as e:
-                            st.error(f"Ошибка генерации картинки: {e}")
+                if img_b64:
+                    # Save to GitHub as pending draft
+                    draft_data = {
+                        "status": "pending",
+                        "created_at": datetime.now().isoformat(),
+                        "idea": next_idea,
+                        "idea_index": next_idx,
+                        "post_text": post_text,
+                        "image_prompt": image_prompt,
+                        "image_base64": img_b64,
+                        "text_provider": env.get("TEXT_PROVIDER", "openai"),
+                        "image_provider": env.get("IMAGE_PROVIDER", "openai"),
+                        "published_at": None,
+                        "message_id": None,
+                        "published_by": None,
+                    }
 
-        # Step 2: Preview
-        if "auto_post_text" in st.session_state:
-            st.divider()
-            st.subheader("📋 Превью поста")
+                    # Read existing SHA if file exists
+                    _, existing_sha = read_github_file(PENDING_POST_PATH)
 
-            col_text, col_img = st.columns([3, 2])
-
-            with col_text:
-                auto_edited_text = st.text_area(
-                    "Текст поста (можно редактировать)",
-                    value=st.session_state["auto_post_text"],
-                    height=300,
-                    key="auto_text_editor",
-                )
-                st.session_state["auto_post_text"] = auto_edited_text
-
-                st.caption("Предпросмотр HTML:")
-                st.markdown(
-                    auto_edited_text.replace("<b>", "**").replace("</b>", "**")
-                    .replace("<i>", "*").replace("</i>", "*"),
-                    unsafe_allow_html=True,
-                )
-
-            with col_img:
-                if "auto_image_path" in st.session_state and os.path.exists(st.session_state["auto_image_path"]):
-                    st.image(st.session_state["auto_image_path"], caption="Сгенерированная картинка", use_container_width=True)
-
-                auto_edited_img_prompt = st.text_area(
-                    "Промпт для картинки (можно изменить)",
-                    value=st.session_state.get("auto_image_prompt", ""),
-                    height=100,
-                    key="auto_img_prompt_editor",
-                )
-                st.session_state["auto_image_prompt"] = auto_edited_img_prompt
-
-                if st.button("🔄 Перегенерировать картинку", key="auto_regen_img"):
-                    env = load_env_values()
-                    with st.spinner("Генерирую новую картинку..."):
-                        try:
-                            old_path = st.session_state.get("auto_image_path")
-                            if old_path and os.path.exists(old_path):
-                                os.remove(old_path)
-                            image_path = generate_image(
-                                st.session_state["auto_image_prompt"],
-                                provider=env.get("IMAGE_PROVIDER", "gemini"),
-                            )
-                            st.session_state["auto_image_path"] = image_path
+                    with st.spinner("Сохраняю черновик на GitHub..."):
+                        ok, err = write_github_file(
+                            PENDING_POST_PATH,
+                            json.dumps(draft_data, ensure_ascii=False, indent=2),
+                            existing_sha,
+                            "Manual draft generation [streamlit]",
+                        )
+                        if ok:
+                            st.session_state["_flash_success"] = True
+                            st.session_state["_flash_msg"] = "✅ Черновик сгенерирован и сохранён!"
                             st.rerun()
-                        except Exception as e:
-                            st.error(f"Ошибка: {e}")
-
-            # Step 3: Publish or regenerate
-            st.divider()
-            col_pub, col_regen = st.columns(2)
-
-            with col_pub:
-                if st.button("📤 Опубликовать в Telegram", key="auto_publish", use_container_width=True, type="primary"):
-                    env = load_env_values()
-                    if "auto_image_path" not in st.session_state:
-                        st.error("Сначала сгенерируйте картинку!")
-                    else:
-                        with st.spinner("Публикую..."):
-                            try:
-                                result = send_post(
-                                    st.session_state["auto_image_path"],
-                                    st.session_state["auto_post_text"],
-                                    bot_token=env.get("TELEGRAM_BOT_TOKEN"),
-                                    channel_id=env.get("TELEGRAM_CHANNEL_ID"),
-                                )
-                                msg_id = result["result"]["message_id"]
-
-                                # Mark used
-                                current_idea = st.session_state.get("auto_idea", "")
-                                for item in ideas:
-                                    if item["idea"] == current_idea and not item.get("used"):
-                                        item["used"] = True
-                                        break
-                                save_json(IDEAS_FILE, ideas)
-
-                                # History
-                                history = load_json(HISTORY_FILE, [])
-                                history.append({
-                                    "date": datetime.now().isoformat(),
-                                    "idea": current_idea,
-                                    "post_text": st.session_state["auto_post_text"],
-                                    "text_provider": env.get("TEXT_PROVIDER", ""),
-                                    "image_provider": env.get("IMAGE_PROVIDER", ""),
-                                    "message_id": msg_id,
-                                })
-                                save_json(HISTORY_FILE, history)
-
-                                # Cleanup
-                                old_path = st.session_state.pop("auto_image_path", None)
-                                if old_path and os.path.exists(old_path):
-                                    os.remove(old_path)
-                                st.session_state.pop("auto_post_text", None)
-                                st.session_state.pop("auto_image_prompt", None)
-                                st.session_state.pop("auto_idea", None)
-
-                                # Flash + rerun so history tab shows the new entry
-                                st.session_state["_flash_success"] = True
-                                st.session_state["_flash_msg"] = f"✅ Опубликовано! message_id: {msg_id}"
-                                st.rerun()
-
-                            except Exception as e:
-                                st.error(f"Ошибка публикации: {e}")
-
-            with col_regen:
-                if st.button("🔄 Перегенерировать всё", key="auto_regen_all", use_container_width=True):
-                    old_path = st.session_state.pop("auto_image_path", None)
-                    if old_path and os.path.exists(old_path):
-                        os.remove(old_path)
-                    st.session_state.pop("auto_post_text", None)
-                    st.session_state.pop("auto_image_prompt", None)
-                    st.rerun()
-
+                        else:
+                            st.error(f"Ошибка сохранения на GitHub: {err}")
     else:
         st.warning("Нет неиспользованных идей. Добавьте новые во вкладке «Идеи».")

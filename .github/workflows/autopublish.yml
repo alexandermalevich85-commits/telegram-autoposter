@@ -2,10 +2,21 @@ name: Auto-publish post
 
 on:
   schedule:
-    # Every day at 10:00 Moscow time (07:00 UTC)
-    - cron: '0 7 * * *'
+    # Phase 1: Generate draft at 08:00 Moscow (05:00 UTC)
+    - cron: '0 5 * * *'
+    # Phase 2: Auto-publish at 18:00 Moscow (15:00 UTC)
+    - cron: '0 15 * * *'
   workflow_dispatch:
     inputs:
+      phase:
+        description: 'Phase to run'
+        required: true
+        default: 'generate'
+        type: choice
+        options:
+          - generate
+          - publish
+          - full
       text_provider:
         description: 'Text provider'
         required: false
@@ -27,9 +38,129 @@ on:
 permissions:
   contents: write
 
+# ── Phase 1: Generate draft ─────────────────────────────────────────────────
+
 jobs:
+  generate:
+    runs-on: ubuntu-latest
+    if: >-
+      (github.event_name == 'schedule' && github.event.schedule == '0 5 * * *')
+      || (github.event_name == 'workflow_dispatch' && github.event.inputs.phase == 'generate')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check if autopublish is enabled
+        id: check
+        run: |
+          if [ -f provider.cfg ]; then
+            ENABLED=$(grep AUTOPUBLISH_ENABLED provider.cfg | cut -d= -f2 || echo "true")
+          else
+            ENABLED="true"
+          fi
+          echo "enabled=$ENABLED" >> $GITHUB_OUTPUT
+          echo "Autopublish enabled: $ENABLED"
+
+      - name: Set up Python
+        if: steps.check.outputs.enabled != 'false'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        if: steps.check.outputs.enabled != 'false'
+        run: pip install anthropic google-genai openai requests python-dotenv Pillow
+
+      - name: Read provider config
+        if: steps.check.outputs.enabled != 'false'
+        id: providers
+        run: |
+          if [ -f provider.cfg ]; then
+            echo "text=$(grep TEXT_PROVIDER provider.cfg | cut -d= -f2)" >> $GITHUB_OUTPUT
+            echo "image=$(grep IMAGE_PROVIDER provider.cfg | cut -d= -f2)" >> $GITHUB_OUTPUT
+          else
+            echo "text=openai" >> $GITHUB_OUTPUT
+            echo "image=openai" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate draft
+        if: steps.check.outputs.enabled != 'false'
+        env:
+          TEXT_PROVIDER: ${{ github.event.inputs.text_provider || steps.providers.outputs.text || 'openai' }}
+          IMAGE_PROVIDER: ${{ github.event.inputs.image_provider || steps.providers.outputs.image || 'openai' }}
+          CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: python main.py generate
+
+      - name: Commit pending draft
+        if: steps.check.outputs.enabled != 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pending_post.json
+          git diff --staged --quiet || git commit -m "Phase 1: draft generated for review [bot]"
+          git push
+
+# ── Phase 2: Auto-publish if not published manually ─────────────────────────
+
   publish:
     runs-on: ubuntu-latest
+    if: >-
+      (github.event_name == 'schedule' && github.event.schedule == '0 15 * * *')
+      || (github.event_name == 'workflow_dispatch' && github.event.inputs.phase == 'publish')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Pull latest changes
+        run: git pull origin main --rebase
+
+      - name: Check if autopublish is enabled
+        id: check
+        run: |
+          if [ -f provider.cfg ]; then
+            ENABLED=$(grep AUTOPUBLISH_ENABLED provider.cfg | cut -d= -f2 || echo "true")
+          else
+            ENABLED="true"
+          fi
+          echo "enabled=$ENABLED" >> $GITHUB_OUTPUT
+          echo "Autopublish enabled: $ENABLED"
+
+      - name: Set up Python
+        if: steps.check.outputs.enabled != 'false'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        if: steps.check.outputs.enabled != 'false'
+        run: pip install anthropic google-genai openai requests python-dotenv Pillow
+
+      - name: Publish pending draft
+        if: steps.check.outputs.enabled != 'false'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+        run: python main.py publish
+
+      - name: Commit updated files
+        if: steps.check.outputs.enabled != 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pending_post.json ideas.json history.json
+          git diff --staged --quiet || git commit -m "Phase 2: auto-published to Telegram [bot]"
+          git push
+
+# ── Full pipeline (legacy, for manual dispatch) ─────────────────────────────
+
+  full:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' && github.event.inputs.phase == 'full'
 
     steps:
       - name: Checkout repository
@@ -41,8 +172,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: |
-          pip install anthropic google-genai openai requests python-dotenv Pillow
+        run: pip install anthropic google-genai openai requests python-dotenv Pillow
 
       - name: Read provider config
         id: providers
@@ -55,9 +185,8 @@ jobs:
             echo "image=openai" >> $GITHUB_OUTPUT
           fi
 
-      - name: Run autoposter
+      - name: Run full autoposter
         env:
-          # Priority: manual input > provider.cfg > defaults
           TEXT_PROVIDER: ${{ github.event.inputs.text_provider || steps.providers.outputs.text || 'openai' }}
           IMAGE_PROVIDER: ${{ github.event.inputs.image_provider || steps.providers.outputs.image || 'openai' }}
           CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
@@ -65,12 +194,12 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
-        run: python main.py
+        run: python main.py full
 
-      - name: Commit updated ideas and history
+      - name: Commit updated files
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add ideas.json history.json
-          git diff --staged --quiet || git commit -m "Auto-publish: mark idea as used, save history [bot]"
+          git diff --staged --quiet || git commit -m "Auto-publish: full pipeline [bot]"
           git push
