@@ -388,7 +388,7 @@ with tab_create:
                             history.append({
                                 "date": datetime.now().isoformat(),
                                 "idea": current_idea,
-                                "post_text": st.session_state["post_text"][:200],
+                                "post_text": st.session_state["post_text"],
                                 "text_provider": env.get("TEXT_PROVIDER", ""),
                                 "image_provider": env.get("IMAGE_PROVIDER", ""),
                                 "message_id": msg_id,
@@ -482,18 +482,31 @@ with tab_history:
     else:
         for entry in reversed(history):
             with st.expander(f"📅 {entry['date'][:16]} — {entry.get('idea', 'N/A')}", expanded=False):
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown(f"**Идея:** {entry.get('idea', 'N/A')}")
-                    st.markdown(f"**Текст (провайдер):** `{entry.get('text_provider', 'N/A')}`")
-                    st.markdown(f"**Картинка (провайдер):** `{entry.get('image_provider', 'N/A')}`")
-                with col2:
-                    st.markdown(f"**Message ID:** `{entry.get('message_id', 'N/A')}`")
-                    st.markdown(f"**Дата:** {entry.get('date', 'N/A')}")
+                st.markdown(
+                    f"**Идея:** {entry.get('idea', 'N/A')}  \n"
+                    f"**Дата:** {entry.get('date', 'N/A')}  \n"
+                    f"**Провайдеры:** текст — `{entry.get('text_provider', 'N/A')}`, "
+                    f"картинка — `{entry.get('image_provider', 'N/A')}`  \n"
+                    f"**Message ID:** `{entry.get('message_id', 'N/A')}`"
+                )
 
                 if entry.get("post_text"):
-                    st.text_area("Текст поста", value=entry["post_text"], height=100, disabled=True,
-                                 key=f"hist_{entry.get('message_id', id(entry))}")
+                    post = entry["post_text"]
+                    st.divider()
+                    st.caption(f"Текст поста ({len(post)} символов):")
+                    st.text_area(
+                        "Текст (исходный HTML)",
+                        value=post,
+                        height=250,
+                        disabled=True,
+                        key=f"hist_{entry.get('message_id', id(entry))}",
+                    )
+                    st.caption("Предпросмотр:")
+                    st.markdown(
+                        post.replace("<b>", "**").replace("</b>", "**")
+                        .replace("<i>", "*").replace("</i>", "*"),
+                        unsafe_allow_html=True,
+                    )
 
         st.caption(f"Всего публикаций: {len(history)}")
 
@@ -647,7 +660,7 @@ crontab -e
                                 history.append({
                                     "date": datetime.now().isoformat(),
                                     "idea": current_idea,
-                                    "post_text": st.session_state["auto_post_text"][:200],
+                                    "post_text": st.session_state["auto_post_text"],
                                     "text_provider": env.get("TEXT_PROVIDER", ""),
                                     "image_provider": env.get("IMAGE_PROVIDER", ""),
                                     "message_id": msg_id,
