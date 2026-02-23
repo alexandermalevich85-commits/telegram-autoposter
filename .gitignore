@@ -5,6 +5,5 @@ __pycache__/
 *.pyo
 autoposter_*.png
 autoposter.log
-history.json
 prompts.json
 .claude/
