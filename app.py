@@ -1,7 +1,9 @@
+import base64
 import json
 import os
 from datetime import datetime
 
+import requests as http_requests
 import streamlit as st
 from PIL import Image
 
@@ -14,6 +16,58 @@ IDEAS_FILE = os.path.join(BASE_DIR, "ideas.json")
 HISTORY_FILE = os.path.join(BASE_DIR, "history.json")
 PROMPTS_FILE = os.path.join(BASE_DIR, "prompts.json")
 ENV_FILE = os.path.join(BASE_DIR, ".env")
+
+GITHUB_REPO = "alexandermalevich85-commits/telegram-autoposter"
+PROVIDER_CFG_PATH = "provider.cfg"
+
+# ── GitHub sync ──────────────────────────────────────────────────────────────
+
+
+def _get_github_token() -> str:
+    """Get GITHUB_TOKEN from st.secrets (Streamlit Cloud) or env."""
+    try:
+        if "GITHUB_TOKEN" in st.secrets:
+            return str(st.secrets["GITHUB_TOKEN"])
+    except Exception:
+        pass
+    return os.getenv("GITHUB_TOKEN", "")
+
+
+def update_github_provider_cfg(text_provider: str, image_provider: str) -> bool:
+    """Update provider.cfg in GitHub repo via Contents API.
+
+    Returns True on success, False on failure.
+    """
+    token = _get_github_token()
+    if not token:
+        return False
+
+    api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{PROVIDER_CFG_PATH}"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+
+    # Get current file SHA (required for update)
+    sha = None
+    resp = http_requests.get(api_url, headers=headers, timeout=10)
+    if resp.status_code == 200:
+        sha = resp.json().get("sha")
+
+    # Build new content
+    new_content = f"TEXT_PROVIDER={text_provider}\nIMAGE_PROVIDER={image_provider}\n"
+    encoded = base64.b64encode(new_content.encode()).decode()
+
+    payload = {
+        "message": f"Update providers: text={text_provider}, image={image_provider}",
+        "content": encoded,
+    }
+    if sha:
+        payload["sha"] = sha
+
+    resp = http_requests.put(api_url, headers=headers, json=payload, timeout=10)
+    return resp.status_code in (200, 201)
+
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -114,7 +168,20 @@ with st.sidebar:
             "TELEGRAM_BOT_TOKEN": tg_token,
             "TELEGRAM_CHANNEL_ID": tg_channel,
         })
-        st.success("Настройки сохранены!")
+        st.success("Настройки сохранены в .env!")
+
+        # Sync providers to GitHub for scheduled runs
+        if _get_github_token():
+            try:
+                ok = update_github_provider_cfg(text_prov, image_prov)
+                if ok:
+                    st.success("Провайдеры синхронизированы с GitHub ✅")
+                else:
+                    st.warning("Не удалось обновить provider.cfg на GitHub")
+            except Exception as e:
+                st.warning(f"Ошибка синхронизации с GitHub: {e}")
+        else:
+            st.info("💡 Добавьте GITHUB_TOKEN для авто-синхронизации провайдеров с GitHub Actions")
 
 # ── Tabs ─────────────────────────────────────────────────────────────────────
 

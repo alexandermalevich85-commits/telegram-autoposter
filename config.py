@@ -27,3 +27,6 @@ OPENAI_API_KEY = _get("OPENAI_API_KEY")
 # Telegram
 TELEGRAM_BOT_TOKEN = _get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHANNEL_ID = _get("TELEGRAM_CHANNEL_ID")
+
+# GitHub (for syncing provider.cfg from Streamlit UI)
+GITHUB_TOKEN = _get("GITHUB_TOKEN")
