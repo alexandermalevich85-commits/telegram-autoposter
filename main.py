@@ -47,7 +47,7 @@ def add_history_entry(idea: str, post_text: str, message_id: int) -> None:
     history.append({
         "date": datetime.now().isoformat(),
         "idea": idea,
-        "post_text": post_text[:200],
+        "post_text": post_text,
         "text_provider": TEXT_PROVIDER,
         "image_provider": IMAGE_PROVIDER,
         "message_id": message_id,

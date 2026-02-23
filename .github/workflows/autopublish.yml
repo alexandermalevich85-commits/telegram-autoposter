@@ -64,10 +64,10 @@ jobs:
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
         run: python main.py
 
-      - name: Commit updated ideas.json
+      - name: Commit updated ideas and history
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add ideas.json
-          git diff --staged --quiet || git commit -m "Mark idea as used [auto]"
+          git add ideas.json history.json
+          git diff --staged --quiet || git commit -m "Auto-publish: mark idea as used, save history [bot]"
           git push
