@@ -28,6 +28,10 @@ CLAUDE_API_KEY = _get("CLAUDE_API_KEY")
 GEMINI_API_KEY = _get("GEMINI_API_KEY")
 OPENAI_API_KEY = _get("OPENAI_API_KEY")
 
+# Face swap
+FACE_SWAP_PROVIDER = _get("FACE_SWAP_PROVIDER", "").lower()  # replicate | gemini | openai | "" (disabled)
+REPLICATE_API_KEY = _get("REPLICATE_API_KEY")
+
 # Telegram
 TELEGRAM_BOT_TOKEN = _get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHANNEL_ID = _get("TELEGRAM_CHANNEL_ID")

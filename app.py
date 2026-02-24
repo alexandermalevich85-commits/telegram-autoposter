@@ -15,6 +15,7 @@ _SECRET_KEYS = [
     "TEXT_PROVIDER", "IMAGE_PROVIDER",
     "CLAUDE_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY",
     "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHANNEL_ID", "GITHUB_TOKEN",
+    "FACE_SWAP_PROVIDER", "REPLICATE_API_KEY",
 ]
 try:
     for _k in _SECRET_KEYS:
@@ -25,6 +26,7 @@ except Exception:
 
 from generate_text import generate_post, DEFAULT_SYSTEM_PROMPT, DEFAULT_IMAGE_PROMPT_TEMPLATE
 from generate_image import generate_image
+from face_swap import apply_face_swap, load_expert_face_b64
 from post_telegram import send_post
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -36,6 +38,7 @@ ENV_FILE = os.path.join(BASE_DIR, ".env")
 GITHUB_REPO = "alexandermalevich85-commits/telegram-autoposter"
 PROVIDER_CFG_PATH = "provider.cfg"
 PENDING_POST_PATH = "pending_post.json"
+EXPERT_FACE_PATH = "expert_face.json"
 
 # ── GitHub API helpers ───────────────────────────────────────────────────────
 
@@ -116,34 +119,41 @@ def update_github_provider_cfg(
     text_provider: str,
     image_provider: str,
     autopublish_enabled: bool | None = None,
+    face_swap_provider: str | None = None,
 ) -> tuple[bool, str]:
     """Update provider.cfg in GitHub repo.
 
     Returns (True, "") on success, (False, error_message) on failure.
     """
-    # Read current file to get SHA
+    # Read current file to get SHA and current values
     content, sha = read_github_file(PROVIDER_CFG_PATH)
+    current = {}
+    if content:
+        for line in content.strip().split("\n"):
+            if "=" in line:
+                k, _, v = line.partition("=")
+                current[k.strip()] = v.strip()
 
-    # Determine current autopublish state if not explicitly set
     if autopublish_enabled is None:
-        autopublish_enabled = True
-        if content:
-            for line in content.strip().split("\n"):
-                if line.startswith("AUTOPUBLISH_ENABLED="):
-                    autopublish_enabled = line.split("=", 1)[1].strip().lower() != "false"
+        autopublish_enabled = current.get("AUTOPUBLISH_ENABLED", "true").lower() != "false"
+
+    if face_swap_provider is None:
+        face_swap_provider = current.get("FACE_SWAP_PROVIDER", "")
 
     enabled_str = "true" if autopublish_enabled else "false"
     new_content = (
         f"TEXT_PROVIDER={text_provider}\n"
         f"IMAGE_PROVIDER={image_provider}\n"
         f"AUTOPUBLISH_ENABLED={enabled_str}\n"
+        f"FACE_SWAP_PROVIDER={face_swap_provider}\n"
     )
 
     return write_github_file(
         PROVIDER_CFG_PATH,
         new_content,
         sha,
-        f"Update config: text={text_provider}, image={image_provider}, autopublish={enabled_str}",
+        f"Update config: text={text_provider}, image={image_provider}, "
+        f"autopublish={enabled_str}, face_swap={face_swap_provider}",
     )
 
 
@@ -275,8 +285,76 @@ with st.sidebar:
     tg_token = st.text_input("Bot Token", value=env.get("TELEGRAM_BOT_TOKEN", ""), type="password")
     tg_channel = st.text_input("Channel ID", value=env.get("TELEGRAM_CHANNEL_ID", ""))
 
+    st.divider()
+    st.subheader("🎭 Face Swap")
+    st.caption("Замена лица на фото эксперта")
+
+    face_swap_options = ["", "replicate", "gemini", "openai"]
+    face_swap_labels = ["Выключено", "Replicate (лучшее качество)", "Gemini (бесплатно)", "OpenAI gpt-image-1"]
+    current_fs = env.get("FACE_SWAP_PROVIDER", "")
+    fs_index = face_swap_options.index(current_fs) if current_fs in face_swap_options else 0
+    face_swap_prov = st.selectbox(
+        "Метод замены лица",
+        face_swap_options,
+        index=fs_index,
+        format_func=lambda x: face_swap_labels[face_swap_options.index(x)],
+    )
+
+    replicate_key = ""
+    if face_swap_prov == "replicate":
+        replicate_key = st.text_input(
+            "Replicate API Key",
+            value=env.get("REPLICATE_API_KEY", ""),
+            type="password",
+        )
+
+    # Expert face upload
+    st.caption("Фото эксперта (для замены лица)")
+    expert_face_file = st.file_uploader(
+        "Загрузить фото эксперта",
+        type=["jpg", "jpeg", "png"],
+        key="expert_face_upload",
+    )
+
+    # Show current expert face status
+    expert_b64 = load_expert_face_b64()
+    if expert_b64:
+        st.success("Фото эксперта загружено ✅")
+        if st.checkbox("Показать фото", key="show_expert_face"):
+            st.image(base64.b64decode(expert_b64), width=150)
+    else:
+        st.info("Фото эксперта не загружено")
+
+    if expert_face_file is not None:
+        # Save expert face locally and to GitHub
+        img = Image.open(expert_face_file)
+        buf = io.BytesIO()
+        img.convert("RGB").save(buf, format="JPEG", quality=90)
+        face_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+
+        face_json = json.dumps({"image_base64": face_b64}, ensure_ascii=False)
+
+        # Save locally
+        local_face_path = os.path.join(BASE_DIR, "expert_face.json")
+        with open(local_face_path, "w", encoding="utf-8") as f:
+            f.write(face_json)
+
+        # Save to GitHub
+        if _get_github_token():
+            _, face_sha = read_github_file(EXPERT_FACE_PATH)
+            ok, err = write_github_file(
+                EXPERT_FACE_PATH, face_json, face_sha,
+                "Upload expert face photo [streamlit]",
+            )
+            if ok:
+                st.success("Фото эксперта сохранено (локально + GitHub) ✅")
+            else:
+                st.warning(f"Сохранено локально, но ошибка GitHub: {err}")
+        else:
+            st.success("Фото эксперта сохранено локально ✅")
+
     if st.button("💾 Сохранить настройки", use_container_width=True):
-        save_env({
+        env_data = {
             "TEXT_PROVIDER": text_prov,
             "IMAGE_PROVIDER": image_prov,
             "CLAUDE_API_KEY": claude_key,
@@ -284,13 +362,20 @@ with st.sidebar:
             "OPENAI_API_KEY": openai_key,
             "TELEGRAM_BOT_TOKEN": tg_token,
             "TELEGRAM_CHANNEL_ID": tg_channel,
-        })
+            "FACE_SWAP_PROVIDER": face_swap_prov,
+        }
+        if replicate_key:
+            env_data["REPLICATE_API_KEY"] = replicate_key
+        save_env(env_data)
         st.success("Настройки сохранены в .env!")
 
         # Sync providers to GitHub for scheduled runs
         if _get_github_token():
             try:
-                ok, err = update_github_provider_cfg(text_prov, image_prov)
+                ok, err = update_github_provider_cfg(
+                    text_prov, image_prov,
+                    face_swap_provider=face_swap_prov,
+                )
                 if ok:
                     st.success("Провайдеры синхронизированы с GitHub ✅")
                 else:
@@ -395,6 +480,29 @@ with tab_create:
                 except Exception as e:
                     st.error(f"Ошибка генерации картинки: {e}")
 
+            # Apply face swap if enabled
+            fs_prov = env.get("FACE_SWAP_PROVIDER", "")
+            if fs_prov and "image_path" in st.session_state:
+                with st.spinner(f"Применяю face swap ({fs_prov})..."):
+                    try:
+                        new_path = apply_face_swap(
+                            st.session_state["image_path"],
+                            method=fs_prov,
+                            image_prompt=st.session_state.get("image_prompt", ""),
+                        )
+                        if new_path != st.session_state["image_path"]:
+                            old = st.session_state["image_path"]
+                            st.session_state["image_path"] = new_path
+                            try:
+                                os.remove(old)
+                            except OSError:
+                                pass
+                            st.success("Face swap применён!")
+                        else:
+                            st.info("Face swap пропущен (фото эксперта не загружено)")
+                    except Exception as e:
+                        st.warning(f"Face swap ошибка: {e}. Используется оригинал.")
+
     # Preview
     if "post_text" in st.session_state:
         st.divider()
@@ -418,6 +526,27 @@ with tab_create:
             if "image_path" in st.session_state and os.path.exists(st.session_state["image_path"]):
                 st.image(st.session_state["image_path"], caption="Сгенерированная картинка", use_container_width=True)
 
+            # Upload custom image
+            custom_img = st.file_uploader(
+                "📷 Загрузить свою картинку",
+                type=["jpg", "jpeg", "png"],
+                key="create_custom_img",
+            )
+            if custom_img is not None:
+                img = Image.open(custom_img)
+                fd, custom_path = tempfile.mkstemp(suffix=".png", prefix="autoposter_custom_")
+                os.close(fd)
+                img.save(custom_path, "PNG")
+                old_path = st.session_state.get("image_path")
+                if old_path and os.path.exists(old_path):
+                    try:
+                        os.remove(old_path)
+                    except OSError:
+                        pass
+                st.session_state["image_path"] = custom_path
+                st.success("Картинка заменена!")
+                st.rerun()
+
             edited_img_prompt = st.text_area(
                 "Промпт для картинки (можно изменить)",
                 value=st.session_state.get("image_prompt", ""),
@@ -436,6 +565,20 @@ with tab_create:
                             st.session_state["image_prompt"],
                             provider=env.get("IMAGE_PROVIDER", "gemini"),
                         )
+                        # Apply face swap if enabled
+                        fs_prov = load_env_values().get("FACE_SWAP_PROVIDER", "")
+                        if fs_prov:
+                            try:
+                                new_path = apply_face_swap(
+                                    image_path,
+                                    method=fs_prov,
+                                    image_prompt=st.session_state.get("image_prompt", ""),
+                                )
+                                if new_path != image_path:
+                                    os.remove(image_path)
+                                    image_path = new_path
+                            except Exception:
+                                pass
                         st.session_state["image_path"] = image_path
                         st.rerun()
                     except Exception as e:
@@ -722,6 +865,31 @@ with tab_auto:
                             use_container_width=True,
                         )
 
+                    # Upload custom image for draft
+                    draft_custom_img = st.file_uploader(
+                        "📷 Загрузить свою картинку",
+                        type=["jpg", "jpeg", "png"],
+                        key="draft_custom_img",
+                    )
+                    if draft_custom_img is not None:
+                        img = Image.open(draft_custom_img)
+                        buf = io.BytesIO()
+                        img.convert("RGB").save(buf, format="JPEG", quality=85)
+                        new_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+
+                        pending["image_base64"] = new_b64
+                        ok, err = write_github_file(
+                            PENDING_POST_PATH,
+                            json.dumps(pending, ensure_ascii=False, indent=2),
+                            pending_sha,
+                            "Update draft: custom image uploaded [manual]",
+                        )
+                        if ok:
+                            st.success("Картинка заменена!")
+                            st.rerun()
+                        else:
+                            st.error(f"Ошибка сохранения: {err}")
+
                     draft_img_prompt = st.text_area(
                         "Промпт для картинки",
                         value=pending.get("image_prompt", ""),
@@ -922,6 +1090,20 @@ with tab_auto:
                             image_prompt,
                             provider=env.get("IMAGE_PROVIDER", "openai"),
                         )
+                        # Apply face swap if enabled
+                        fs_prov = env.get("FACE_SWAP_PROVIDER", "")
+                        if fs_prov:
+                            try:
+                                new_path = apply_face_swap(
+                                    img_path,
+                                    method=fs_prov,
+                                    image_prompt=image_prompt,
+                                )
+                                if new_path != img_path:
+                                    os.remove(img_path)
+                                    img_path = new_path
+                            except Exception as e:
+                                st.warning(f"Face swap ошибка: {e}")
                         img_b64 = image_to_base64(img_path)
                         os.remove(img_path)
                     except Exception as e:

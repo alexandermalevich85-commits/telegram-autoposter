@@ -9,9 +9,10 @@ from datetime import datetime
 
 from PIL import Image
 
-from config import TEXT_PROVIDER, IMAGE_PROVIDER
+from config import TEXT_PROVIDER, IMAGE_PROVIDER, FACE_SWAP_PROVIDER
 from generate_text import generate_post
 from generate_image import generate_image
+from face_swap import apply_face_swap
 from post_telegram import send_post
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -140,6 +141,30 @@ def cmd_generate() -> None:
     image_path = generate_image(image_prompt)
     log.info("Image saved to %s", image_path)
 
+    # Face swap (if enabled)
+    face_swap_used = ""
+    if FACE_SWAP_PROVIDER:
+        log.info("Applying face swap via %s...", FACE_SWAP_PROVIDER)
+        try:
+            new_path = apply_face_swap(
+                image_path,
+                method=FACE_SWAP_PROVIDER,
+                image_prompt=image_prompt,
+            )
+            if new_path != image_path:
+                # Face swap succeeded — clean up original
+                try:
+                    os.remove(image_path)
+                except OSError:
+                    pass
+                image_path = new_path
+                face_swap_used = FACE_SWAP_PROVIDER
+                log.info("Face swap applied successfully")
+            else:
+                log.info("Face swap skipped (no expert face uploaded)")
+        except Exception as e:
+            log.warning("Face swap failed, using original image: %s", e)
+
     # Encode image to base64
     image_b64 = image_to_base64(image_path)
     log.info("Image encoded to base64 (%d chars)", len(image_b64))
@@ -155,6 +180,7 @@ def cmd_generate() -> None:
         "image_base64": image_b64,
         "text_provider": TEXT_PROVIDER,
         "image_provider": IMAGE_PROVIDER,
+        "face_swap_provider": face_swap_used,
         "published_at": None,
         "message_id": None,
         "published_by": None,
@@ -242,6 +268,25 @@ def cmd_full() -> None:
     log.info("Generating image via %s...", IMAGE_PROVIDER)
     image_path = generate_image(image_prompt)
     log.info("Image saved to %s", image_path)
+
+    # Face swap (if enabled)
+    if FACE_SWAP_PROVIDER:
+        log.info("Applying face swap via %s...", FACE_SWAP_PROVIDER)
+        try:
+            new_path = apply_face_swap(
+                image_path,
+                method=FACE_SWAP_PROVIDER,
+                image_prompt=image_prompt,
+            )
+            if new_path != image_path:
+                try:
+                    os.remove(image_path)
+                except OSError:
+                    pass
+                image_path = new_path
+                log.info("Face swap applied successfully")
+        except Exception as e:
+            log.warning("Face swap failed, using original image: %s", e)
 
     log.info("Sending to Telegram...")
     result = send_post(image_path, post_text)

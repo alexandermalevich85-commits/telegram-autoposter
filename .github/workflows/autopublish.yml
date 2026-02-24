@@ -70,7 +70,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.check.outputs.enabled != 'false'
-        run: pip install anthropic google-genai openai requests python-dotenv Pillow
+        run: pip install anthropic google-genai openai replicate requests python-dotenv Pillow
 
       - name: Read provider config
         if: steps.check.outputs.enabled != 'false'
@@ -79,9 +79,11 @@ jobs:
           if [ -f provider.cfg ]; then
             echo "text=$(grep TEXT_PROVIDER provider.cfg | cut -d= -f2)" >> $GITHUB_OUTPUT
             echo "image=$(grep IMAGE_PROVIDER provider.cfg | cut -d= -f2)" >> $GITHUB_OUTPUT
+            echo "face_swap=$(grep FACE_SWAP_PROVIDER provider.cfg | cut -d= -f2)" >> $GITHUB_OUTPUT
           else
             echo "text=openai" >> $GITHUB_OUTPUT
             echo "image=openai" >> $GITHUB_OUTPUT
+            echo "face_swap=" >> $GITHUB_OUTPUT
           fi
 
       - name: Generate draft
@@ -89,9 +91,11 @@ jobs:
         env:
           TEXT_PROVIDER: ${{ github.event.inputs.text_provider || steps.providers.outputs.text || 'openai' }}
           IMAGE_PROVIDER: ${{ github.event.inputs.image_provider || steps.providers.outputs.image || 'openai' }}
+          FACE_SWAP_PROVIDER: ${{ steps.providers.outputs.face_swap }}
           CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          REPLICATE_API_KEY: ${{ secrets.REPLICATE_API_KEY }}
         run: python main.py generate
 
       - name: Commit pending draft
@@ -137,7 +141,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.check.outputs.enabled != 'false'
-        run: pip install anthropic google-genai openai requests python-dotenv Pillow
+        run: pip install anthropic google-genai openai replicate requests python-dotenv Pillow
 
       - name: Publish pending draft
         if: steps.check.outputs.enabled != 'false'
@@ -172,7 +176,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install anthropic google-genai openai requests python-dotenv Pillow
+        run: pip install anthropic google-genai openai replicate requests python-dotenv Pillow
 
       - name: Read provider config
         id: providers
@@ -180,18 +184,22 @@ jobs:
           if [ -f provider.cfg ]; then
             echo "text=$(grep TEXT_PROVIDER provider.cfg | cut -d= -f2)" >> $GITHUB_OUTPUT
             echo "image=$(grep IMAGE_PROVIDER provider.cfg | cut -d= -f2)" >> $GITHUB_OUTPUT
+            echo "face_swap=$(grep FACE_SWAP_PROVIDER provider.cfg | cut -d= -f2)" >> $GITHUB_OUTPUT
           else
             echo "text=openai" >> $GITHUB_OUTPUT
             echo "image=openai" >> $GITHUB_OUTPUT
+            echo "face_swap=" >> $GITHUB_OUTPUT
           fi
 
       - name: Run full autoposter
         env:
           TEXT_PROVIDER: ${{ github.event.inputs.text_provider || steps.providers.outputs.text || 'openai' }}
           IMAGE_PROVIDER: ${{ github.event.inputs.image_provider || steps.providers.outputs.image || 'openai' }}
+          FACE_SWAP_PROVIDER: ${{ steps.providers.outputs.face_swap }}
           CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          REPLICATE_API_KEY: ${{ secrets.REPLICATE_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
         run: python main.py full
