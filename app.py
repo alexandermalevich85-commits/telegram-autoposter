@@ -819,9 +819,9 @@ with tab_auto:
     if new_enabled:
         st.info(
             "📅 **Расписание:**\n"
-            "- **08:00 МСК** — генерация черновика (текст + картинка)\n"
-            "- **08:00–18:00** — вы можете просмотреть, отредактировать и опубликовать вручную\n"
-            "- **18:00 МСК** — если не опубликовано вручную, пост уйдёт автоматически"
+            "- **05:00 МСК** — генерация черновика (текст + картинка)\n"
+            "- **05:00–15:00** — вы можете просмотреть, отредактировать и опубликовать вручную\n"
+            "- **15:00 МСК** — если не опубликовано вручную, пост уйдёт автоматически"
         )
     else:
         st.warning("⏸️ Автопубликация выключена. Посты не будут генерироваться и публиковаться автоматически.")
@@ -836,7 +836,7 @@ with tab_auto:
     pending_raw, pending_sha = read_github_file(PENDING_POST_PATH)
 
     if pending_raw is None:
-        st.info("📭 Нет черновика. Следующий черновик будет сгенерирован в **08:00 МСК**.")
+        st.info("📭 Нет черновика. Следующий черновик будет сгенерирован в **05:00 МСК**.")
     else:
         try:
             pending = json.loads(pending_raw)
@@ -945,6 +945,22 @@ with tab_auto:
                                     draft_img_prompt,
                                     provider=env.get("IMAGE_PROVIDER", "openai"),
                                 )
+                                # Apply face swap if enabled
+                                if face_swap_prov:
+                                    expert_b64_regen = get_expert_face_b64()
+                                    if expert_b64_regen:
+                                        try:
+                                            swapped = apply_face_swap(
+                                                new_image_path,
+                                                expert_face_b64=expert_b64_regen,
+                                                method=face_swap_prov,
+                                                image_prompt=draft_img_prompt,
+                                            )
+                                            if swapped != new_image_path:
+                                                os.remove(new_image_path)
+                                                new_image_path = swapped
+                                        except Exception as e:
+                                            st.warning(f"Face swap ошибка: {e}")
                                 new_b64 = image_to_base64(new_image_path)
                                 os.remove(new_image_path)
 
@@ -1164,6 +1180,7 @@ with tab_auto:
                         "image_base64": img_b64,
                         "text_provider": env.get("TEXT_PROVIDER", "openai"),
                         "image_provider": env.get("IMAGE_PROVIDER", "openai"),
+                        "face_swap_provider": face_swap_prov if face_swap_prov else "",
                         "published_at": None,
                         "message_id": None,
                         "published_by": None,

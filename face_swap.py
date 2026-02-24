@@ -35,6 +35,21 @@ def load_expert_face_b64() -> str | None:
         return None
 
 
+def _resize_if_needed(b64_string: str, max_side: int = 1024) -> str:
+    """Resize base64-encoded image if larger than max_side, return base64."""
+    img = _b64_to_pil(b64_string)
+    w, h = img.size
+    if w <= max_side and h <= max_side:
+        return b64_string
+    # Scale down preserving aspect ratio
+    ratio = max_side / max(w, h)
+    new_w, new_h = int(w * ratio), int(h * ratio)
+    img = img.resize((new_w, new_h), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.convert("RGB").save(buf, format="JPEG", quality=90)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
 def _b64_to_pil(b64_string: str) -> Image.Image:
     """Decode base64 string to PIL Image."""
     return Image.open(io.BytesIO(base64.b64decode(b64_string)))
@@ -236,6 +251,9 @@ def apply_face_swap(
     face_b64 = expert_face_b64 or load_expert_face_b64()
     if not face_b64:
         return source_image_path  # No expert face — return original
+
+    # Resize expert face to max 1024px to avoid API issues with huge images
+    face_b64 = _resize_if_needed(face_b64, max_side=1024)
 
     swap_fn = _METHODS.get(method)
     if swap_fn is None:
