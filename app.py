@@ -67,6 +67,9 @@ def _github_headers() -> dict | None:
 def read_github_file(path: str) -> tuple[str | None, str | None]:
     """Read a file from GitHub repo via Contents API.
 
+    For files > 1 MB the Contents API does not return inline content,
+    so we fall back to the raw download URL.
+
     Returns (content_string, sha) or (None, None) on failure.
     """
     headers = _github_headers()
@@ -77,9 +80,19 @@ def read_github_file(path: str) -> tuple[str | None, str | None]:
         resp = http_requests.get(api_url, headers=headers, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
-            content = base64.b64decode(data["content"]).decode("utf-8")
             sha = data["sha"]
-            return content, sha
+
+            # Normal case: file < 1 MB — content is base64-encoded inline
+            if data.get("content"):
+                content = base64.b64decode(data["content"]).decode("utf-8")
+                return content, sha
+
+            # Large file (> 1 MB): use download_url for raw content
+            download_url = data.get("download_url")
+            if download_url:
+                raw_resp = http_requests.get(download_url, headers=headers, timeout=30)
+                if raw_resp.status_code == 200:
+                    return raw_resp.text, sha
     except Exception:
         pass
     return None, None
