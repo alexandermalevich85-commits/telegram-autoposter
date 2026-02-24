@@ -226,6 +226,29 @@ def load_env_values() -> dict:
     return values
 
 
+def get_expert_face_b64() -> str | None:
+    """Get expert face base64: try local file first, then GitHub."""
+    # 1. Try local file
+    local_b64 = load_expert_face_b64()
+    if local_b64:
+        return local_b64
+    # 2. Try GitHub
+    try:
+        content, _ = read_github_file(EXPERT_FACE_PATH)
+        if content:
+            data = json.loads(content)
+            b64 = data.get("image_base64")
+            if b64:
+                # Cache locally for future calls
+                local_path = os.path.join(BASE_DIR, "expert_face.json")
+                with open(local_path, "w", encoding="utf-8") as f:
+                    f.write(content)
+                return b64
+    except Exception:
+        pass
+    return None
+
+
 def image_to_base64(image_path: str) -> str:
     """Compress image to JPEG q85 and return base64 string."""
     img = Image.open(image_path)
@@ -330,7 +353,7 @@ with st.sidebar:
     )
 
     # Show current expert face status
-    expert_b64 = load_expert_face_b64()
+    expert_b64 = get_expert_face_b64()
     if expert_b64:
         st.success("Фото эксперта загружено ✅")
         if st.checkbox("Показать фото", key="show_expert_face"):
@@ -493,28 +516,30 @@ with tab_create:
                 except Exception as e:
                     st.error(f"Ошибка генерации картинки: {e}")
 
-            # Apply face swap if enabled
-            fs_prov = env.get("FACE_SWAP_PROVIDER", "")
-            if fs_prov and "image_path" in st.session_state:
-                with st.spinner(f"Применяю face swap ({fs_prov})..."):
-                    try:
-                        new_path = apply_face_swap(
-                            st.session_state["image_path"],
-                            method=fs_prov,
-                            image_prompt=st.session_state.get("image_prompt", ""),
-                        )
-                        if new_path != st.session_state["image_path"]:
-                            old = st.session_state["image_path"]
-                            st.session_state["image_path"] = new_path
-                            try:
-                                os.remove(old)
-                            except OSError:
-                                pass
-                            st.success("Face swap применён!")
-                        else:
-                            st.info("Face swap пропущен (фото эксперта не загружено)")
-                    except Exception as e:
-                        st.warning(f"Face swap ошибка: {e}. Используется оригинал.")
+            # Apply face swap if enabled (read from sidebar widget, not .env)
+            if face_swap_prov and "image_path" in st.session_state:
+                expert_b64_for_swap = get_expert_face_b64()
+                if expert_b64_for_swap:
+                    with st.spinner(f"Применяю face swap ({face_swap_prov})..."):
+                        try:
+                            new_path = apply_face_swap(
+                                st.session_state["image_path"],
+                                expert_face_b64=expert_b64_for_swap,
+                                method=face_swap_prov,
+                                image_prompt=st.session_state.get("image_prompt", ""),
+                            )
+                            if new_path != st.session_state["image_path"]:
+                                old = st.session_state["image_path"]
+                                st.session_state["image_path"] = new_path
+                                try:
+                                    os.remove(old)
+                                except OSError:
+                                    pass
+                                st.success("Face swap применён!")
+                        except Exception as e:
+                            st.warning(f"Face swap ошибка: {e}. Используется оригинал.")
+                else:
+                    st.info("Face swap пропущен (фото эксперта не загружено)")
 
     # Preview
     if "post_text" in st.session_state:
@@ -578,20 +603,22 @@ with tab_create:
                             st.session_state["image_prompt"],
                             provider=env.get("IMAGE_PROVIDER", "gemini"),
                         )
-                        # Apply face swap if enabled
-                        fs_prov = load_env_values().get("FACE_SWAP_PROVIDER", "")
-                        if fs_prov:
-                            try:
-                                new_path = apply_face_swap(
-                                    image_path,
-                                    method=fs_prov,
-                                    image_prompt=st.session_state.get("image_prompt", ""),
-                                )
-                                if new_path != image_path:
-                                    os.remove(image_path)
-                                    image_path = new_path
-                            except Exception:
-                                pass
+                        # Apply face swap if enabled (read from sidebar widget)
+                        if face_swap_prov:
+                            expert_b64_regen = get_expert_face_b64()
+                            if expert_b64_regen:
+                                try:
+                                    new_path = apply_face_swap(
+                                        image_path,
+                                        expert_face_b64=expert_b64_regen,
+                                        method=face_swap_prov,
+                                        image_prompt=st.session_state.get("image_prompt", ""),
+                                    )
+                                    if new_path != image_path:
+                                        os.remove(image_path)
+                                        image_path = new_path
+                                except Exception:
+                                    pass
                         st.session_state["image_path"] = image_path
                         st.rerun()
                     except Exception as e:
@@ -1103,20 +1130,22 @@ with tab_auto:
                             image_prompt,
                             provider=env.get("IMAGE_PROVIDER", "openai"),
                         )
-                        # Apply face swap if enabled
-                        fs_prov = env.get("FACE_SWAP_PROVIDER", "")
-                        if fs_prov:
-                            try:
-                                new_path = apply_face_swap(
-                                    img_path,
-                                    method=fs_prov,
-                                    image_prompt=image_prompt,
-                                )
-                                if new_path != img_path:
-                                    os.remove(img_path)
-                                    img_path = new_path
-                            except Exception as e:
-                                st.warning(f"Face swap ошибка: {e}")
+                        # Apply face swap if enabled (read from sidebar widget)
+                        if face_swap_prov:
+                            expert_b64_draft = get_expert_face_b64()
+                            if expert_b64_draft:
+                                try:
+                                    new_path = apply_face_swap(
+                                        img_path,
+                                        expert_face_b64=expert_b64_draft,
+                                        method=face_swap_prov,
+                                        image_prompt=image_prompt,
+                                    )
+                                    if new_path != img_path:
+                                        os.remove(img_path)
+                                        img_path = new_path
+                                except Exception as e:
+                                    st.warning(f"Face swap ошибка: {e}")
                         img_b64 = image_to_base64(img_path)
                         os.remove(img_path)
                     except Exception as e:
