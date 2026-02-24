@@ -2,10 +2,10 @@ name: Auto-publish post
 
 on:
   schedule:
-    # Phase 1: Generate draft at 08:00 Moscow (05:00 UTC)
-    - cron: '0 5 * * *'
-    # Phase 2: Auto-publish at 18:00 Moscow (15:00 UTC)
-    - cron: '0 15 * * *'
+    # Phase 1: Generate draft at 05:00 Moscow (02:00 UTC)
+    - cron: '0 2 * * *'
+    # Phase 2: Auto-publish at 15:00 Moscow (12:00 UTC)
+    - cron: '0 12 * * *'
   workflow_dispatch:
     inputs:
       phase:
@@ -44,7 +44,7 @@ jobs:
   generate:
     runs-on: ubuntu-latest
     if: >-
-      (github.event_name == 'schedule' && github.event.schedule == '0 5 * * *')
+      (github.event_name == 'schedule' && github.event.schedule == '0 2 * * *')
       || (github.event_name == 'workflow_dispatch' && github.event.inputs.phase == 'generate')
 
     steps:
@@ -112,7 +112,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     if: >-
-      (github.event_name == 'schedule' && github.event.schedule == '0 15 * * *')
+      (github.event_name == 'schedule' && github.event.schedule == '0 12 * * *')
       || (github.event_name == 'workflow_dispatch' && github.event.inputs.phase == 'publish')
 
     steps:
