@@ -1,5 +1,5 @@
 {
-  "status": "pending",
+  "status": "published",
   "created_at": "2026-02-25T05:47:57.729994",
   "idea": "Лимфодренажный массаж лица в домашних условиях",
   "idea_index": 5,
@@ -9,7 +9,7 @@
   "text_provider": "openai",
   "image_provider": "openai",
   "face_swap_provider": "",
-  "published_at": null,
-  "message_id": null,
-  "published_by": null
+  "published_at": "2026-02-25T15:13:41.557922",
+  "message_id": 390,
+  "published_by": "auto"
 }
