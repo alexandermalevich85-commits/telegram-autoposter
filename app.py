@@ -170,6 +170,36 @@ def update_github_provider_cfg(
     )
 
 
+PROMPTS_JSON_PATH = "prompts.json"
+
+
+def update_github_prompts(
+    system_prompt: str,
+    image_prompt_template: str,
+) -> tuple[bool, str]:
+    """Sync prompts.json to GitHub repo.
+
+    Returns (True, "") on success, (False, error_message) on failure.
+    """
+    import json as _json
+
+    content, sha = read_github_file(PROMPTS_JSON_PATH)
+    new_content = _json.dumps(
+        {
+            "system_prompt": system_prompt,
+            "image_prompt_template": image_prompt_template,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    return write_github_file(
+        PROMPTS_JSON_PATH,
+        new_content,
+        sha,
+        "Update prompts from Streamlit UI",
+    )
+
+
 def read_provider_cfg_from_github() -> dict:
     """Read provider.cfg from GitHub and parse it. Returns dict of values."""
     content, _ = read_github_file(PROVIDER_CFG_PATH)
@@ -459,7 +489,12 @@ with tab_prompts:
                 "system_prompt": new_system,
                 "image_prompt_template": new_image_tpl,
             })
-            st.success("Промпты сохранены!")
+            # Sync to GitHub so GitHub Actions uses the same prompts
+            ok, err = update_github_prompts(new_system, new_image_tpl)
+            if ok:
+                st.success("Промпты сохранены и синхронизированы в GitHub!")
+            else:
+                st.warning(f"Промпты сохранены локально, но синхронизация не удалась: {err}")
     with col2:
         if st.button("🔄 Сбросить по умолчанию", use_container_width=True):
             if os.path.exists(PROMPTS_FILE):

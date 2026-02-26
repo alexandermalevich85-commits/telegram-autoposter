@@ -130,9 +130,27 @@ def cmd_generate() -> None:
     idx, idea = result
     log.info("Idea #%d: %s", idx, idea)
 
+    # Load custom prompts (if synced from Streamlit)
+    custom_system_prompt = None
+    custom_image_tpl = None
+    prompts_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompts.json")
+    if os.path.exists(prompts_path):
+        try:
+            with open(prompts_path, "r", encoding="utf-8") as _pf:
+                _prompts_data = json.load(_pf)
+            custom_system_prompt = _prompts_data.get("system_prompt")
+            custom_image_tpl = _prompts_data.get("image_prompt_template")
+            log.info("Custom prompts loaded from prompts.json")
+        except Exception as exc:
+            log.warning("Failed to load prompts.json: %s", exc)
+
     # Generate text
     log.info("Generating post text via %s...", TEXT_PROVIDER)
-    post_text, image_prompt = generate_post(idea)
+    post_text, image_prompt = generate_post(
+        idea,
+        system_prompt=custom_system_prompt,
+        image_prompt_template=custom_image_tpl,
+    )
     log.info("Post text generated (%d chars)", len(post_text))
     log.info("Image prompt: %s", image_prompt[:100])
 
