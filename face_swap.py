@@ -97,9 +97,9 @@ def _swap_replicate(
     source_uri = f"data:image/png;base64,{base64.b64encode(source_bytes).decode()}"
 
     output = client.run(
-        "xiankgx/face-swap:cff87316e31787df12002c9b4bff286f20cee315b38c4743bef89d8113e3d986",
+        "arabyai-replicate/roop_face_swap:11b6bf0f4e14d808f655e87e5448233cceff10a45f659d71539cafb7163b2e84",
         input={
-            "target_image": source_uri,
+            "input_image": source_uri,
             "swap_image": expert_uri,
         },
     )
