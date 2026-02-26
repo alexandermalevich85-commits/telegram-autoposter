@@ -1,5 +1,5 @@
 {
-  "status": "pending",
+  "status": "published",
   "created_at": "2026-02-26T10:52:13.106586",
   "idea": "Как подтянуть кожу вокруг глаз без косметолога",
   "idea_index": 6,
@@ -9,7 +9,7 @@
   "text_provider": "openai",
   "image_provider": "openai",
   "face_swap_provider": "",
-  "published_at": null,
-  "message_id": null,
-  "published_by": null
+  "published_at": "2026-02-26T14:42:13.766190",
+  "message_id": 392,
+  "published_by": "auto"
 }
