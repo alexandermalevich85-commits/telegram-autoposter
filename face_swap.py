@@ -97,7 +97,7 @@ def _swap_replicate(
     source_uri = f"data:image/png;base64,{base64.b64encode(source_bytes).decode()}"
 
     output = client.run(
-        "codeplugtech/face-swap",
+        "cdingram/face-swap",
         input={
             "input_image": source_uri,
             "swap_image": expert_uri,
