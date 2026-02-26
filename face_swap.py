@@ -125,8 +125,11 @@ def _swap_gemini(
     api_key: str | None = None,
 ) -> str:
     """Use Gemini multimodal to regenerate image with expert's face as reference."""
+    import logging
     from google import genai
     from google.genai import types
+
+    log = logging.getLogger("face_swap.gemini")
 
     key = api_key or GEMINI_API_KEY
     if not key:
@@ -137,10 +140,12 @@ def _swap_gemini(
     # Load expert face as PIL
     expert_img = _b64_to_pil(expert_face_b64)
     expert_bytes = _pil_to_bytes(expert_img, "JPEG")
+    log.info("Expert face: %d bytes", len(expert_bytes))
 
     # Load source image
     with open(source_image_path, "rb") as f:
         source_bytes = f.read()
+    log.info("Source image: %d bytes", len(source_bytes))
 
     prompt_text = (
         "Edit this image: replace the person's face with the face from the reference photo. "
@@ -148,8 +153,9 @@ def _swap_gemini(
         "Make the face blend naturally into the image."
     )
 
+    log.info("Calling Gemini for face swap...")
     response = client.models.generate_content(
-        model="gemini-2.5-flash-preview-04-17",
+        model="gemini-2.0-flash-exp",
         contents=[
             prompt_text,
             types.Part.from_bytes(data=source_bytes, mime_type="image/png"),
@@ -164,6 +170,7 @@ def _swap_gemini(
     for part in response.candidates[0].content.parts:
         if part.inline_data is not None:
             result_img = Image.open(io.BytesIO(part.inline_data.data))
+            log.info("Face swap result: %s, %s", result_img.size, result_img.mode)
             return _pil_to_tempfile(result_img)
 
     raise RuntimeError("Gemini did not return an image with face swap")
