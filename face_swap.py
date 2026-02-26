@@ -143,7 +143,7 @@ def _swap_gemini(
         source_bytes = f.read()
 
     prompt_text = (
-        "Edit this image: replace the woman's face with the face from the reference photo. "
+        "Edit this image: replace the person's face with the face from the reference photo. "
         "Keep the rest of the image exactly the same — same pose, background, lighting, and composition. "
         "Make the face blend naturally into the image."
     )
@@ -178,7 +178,10 @@ def _swap_openai(
     api_key: str | None = None,
 ) -> str:
     """Use OpenAI gpt-image-1 to edit image with expert's face as reference."""
+    import logging
     import openai
+
+    log = logging.getLogger("face_swap.openai")
 
     key = api_key or OPENAI_API_KEY
     if not key:
@@ -186,35 +189,47 @@ def _swap_openai(
 
     client = openai.OpenAI(api_key=key)
 
-    # Prepare images as file-like objects
+    # Decode expert face
     expert_bytes = base64.b64decode(expert_face_b64)
+    log.info("Expert face: %d bytes", len(expert_bytes))
 
     with open(source_image_path, "rb") as source_file:
         source_bytes = source_file.read()
+    log.info("Source image: %d bytes", len(source_bytes))
+
+    # Pass files as tuples (filename, content, content_type) so the API
+    # receives correct MIME types — bare BytesIO sends no name/type.
+    source_ext = source_image_path.rsplit(".", 1)[-1].lower()
+    source_mime = "image/png" if source_ext == "png" else "image/jpeg"
 
     response = client.images.edit(
         model="gpt-image-1",
         image=[
-            io.BytesIO(source_bytes),
-            io.BytesIO(expert_bytes),
+            ("source." + source_ext, io.BytesIO(source_bytes), source_mime),
+            ("expert.jpg", io.BytesIO(expert_bytes), "image/jpeg"),
         ],
         prompt=(
-            "Replace the woman's face in the first image with the face from the second image. "
+            "Replace the person's face in the first image with the face from the second image. "
             "Keep everything else the same — pose, background, lighting, composition. "
             "Make the face blend naturally."
         ),
         size="1024x1024",
+        response_format="b64_json",
     )
 
-    # gpt-image-1 returns base64 by default
+    log.info("OpenAI response received, data items: %d", len(response.data))
+
     result_b64 = response.data[0].b64_json
     if result_b64:
         result_img = Image.open(io.BytesIO(base64.b64decode(result_b64)))
     else:
         result_url = response.data[0].url
-        result_data = requests.get(result_url, timeout=30).content
+        if not result_url:
+            raise RuntimeError("OpenAI вернул пустой ответ (ни b64_json, ни url)")
+        result_data = requests.get(result_url, timeout=60).content
         result_img = Image.open(io.BytesIO(result_data))
 
+    log.info("Face swap result: %s, %s", result_img.size, result_img.mode)
     return _pil_to_tempfile(result_img)
 
 
@@ -248,12 +263,19 @@ def apply_face_swap(
         Path to the new image with swapped face.
         If no expert face is available, returns the original path unchanged.
     """
+    import logging
+    log = logging.getLogger("face_swap")
+
     face_b64 = expert_face_b64 or load_expert_face_b64()
     if not face_b64:
+        log.warning("No expert face found — skipping face swap")
         return source_image_path  # No expert face — return original
+
+    log.info("Expert face loaded: %d chars base64", len(face_b64))
 
     # Resize expert face to max 1024px to avoid API issues with huge images
     face_b64 = _resize_if_needed(face_b64, max_side=1024)
+    log.info("Expert face after resize: %d chars base64", len(face_b64))
 
     swap_fn = _METHODS.get(method)
     if swap_fn is None:
@@ -261,6 +283,8 @@ def apply_face_swap(
             f"Unknown face swap method: '{method}'. "
             f"Use one of: {', '.join(_METHODS)}"
         )
+
+    log.info("Applying face swap via '%s' to %s", method, source_image_path)
 
     if method == "gemini":
         return swap_fn(source_image_path, face_b64, image_prompt=image_prompt, api_key=api_key)
