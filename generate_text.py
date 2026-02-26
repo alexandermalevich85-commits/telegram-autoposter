@@ -97,6 +97,7 @@ def generate_post(
     system_prompt: str | None = None,
     image_prompt_template: str | None = None,
     api_key: str | None = None,
+    context_document: str | None = None,
 ) -> tuple[str, str]:
     """Generate a Telegram post text and image prompt from an idea.
 
@@ -107,12 +108,24 @@ def generate_post(
         image_prompt_template: Override the fallback image prompt template.
             Use {idea} placeholder for the topic.
         api_key: Override the API key from config.
+        context_document: Optional text from an attached document to use as
+            additional context and information source for post generation.
 
     Returns:
         Tuple of (post_text, image_prompt).
     """
     prov = provider or TEXT_PROVIDER
     prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
+
+    # Append context document to system prompt if provided
+    if context_document:
+        prompt += (
+            "\n\n--- КОНТЕКСТНЫЙ ДОКУМЕНТ ---\n"
+            f"{context_document}\n"
+            "--- КОНЕЦ ДОКУМЕНТА ---\n\n"
+            "Используй информацию из документа выше как источник данных и контекст "
+            "при написании поста. Опирайся на факты и стиль из документа."
+        )
 
     provider_fn = _PROVIDERS.get(prov)
     if provider_fn is None:

@@ -144,12 +144,30 @@ def cmd_generate() -> None:
         except Exception as exc:
             log.warning("Failed to load prompts.json: %s", exc)
 
+    # Load context document (if synced from Streamlit)
+    context_document = None
+    context_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompt_context.json")
+    if os.path.exists(context_path):
+        try:
+            with open(context_path, "r", encoding="utf-8") as _cf:
+                _context_data = json.load(_cf)
+            context_document = _context_data.get("text")
+            if context_document:
+                log.info(
+                    "Context document loaded: %s (%d chars)",
+                    _context_data.get("filename", "?"),
+                    len(context_document),
+                )
+        except Exception as exc:
+            log.warning("Failed to load prompt_context.json: %s", exc)
+
     # Generate text
     log.info("Generating post text via %s...", TEXT_PROVIDER)
     post_text, image_prompt = generate_post(
         idea,
         system_prompt=custom_system_prompt,
         image_prompt_template=custom_image_tpl,
+        context_document=context_document,
     )
     log.info("Post text generated (%d chars)", len(post_text))
     log.info("Image prompt: %s", image_prompt[:100])

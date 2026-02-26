@@ -33,12 +33,14 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 IDEAS_FILE = os.path.join(BASE_DIR, "ideas.json")
 HISTORY_FILE = os.path.join(BASE_DIR, "history.json")
 PROMPTS_FILE = os.path.join(BASE_DIR, "prompts.json")
+CONTEXT_FILE = os.path.join(BASE_DIR, "prompt_context.json")
 ENV_FILE = os.path.join(BASE_DIR, ".env")
 
 GITHUB_REPO = "alexandermalevich85-commits/telegram-autoposter"
 PROVIDER_CFG_PATH = "provider.cfg"
 PENDING_POST_PATH = "pending_post.json"
 EXPERT_FACE_PATH = "expert_face.json"
+CONTEXT_JSON_PATH = "prompt_context.json"
 
 # ── GitHub API helpers ───────────────────────────────────────────────────────
 
@@ -198,6 +200,49 @@ def update_github_prompts(
         sha,
         "Update prompts from Streamlit UI",
     )
+
+
+def update_github_context(context_data: dict) -> tuple[bool, str]:
+    """Sync prompt_context.json to GitHub repo.
+
+    Returns (True, "") on success, (False, error_message) on failure.
+    """
+    import json as _json
+
+    content, sha = read_github_file(CONTEXT_JSON_PATH)
+    new_content = _json.dumps(context_data, ensure_ascii=False, indent=2)
+    return write_github_file(
+        CONTEXT_JSON_PATH,
+        new_content,
+        sha,
+        "Update context document from Streamlit UI",
+    )
+
+
+def delete_github_context() -> tuple[bool, str]:
+    """Delete prompt_context.json from GitHub repo.
+
+    Returns (True, "") on success, (False, error_message) on failure.
+    """
+    content, sha = read_github_file(CONTEXT_JSON_PATH)
+    if not sha:
+        return True, ""  # File doesn't exist, nothing to delete
+
+    headers = _github_headers()
+    if not headers:
+        return False, "GITHUB_TOKEN не задан"
+
+    import requests as http_req
+    api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{CONTEXT_JSON_PATH}"
+    payload = {"message": "Remove context document from Streamlit UI", "sha": sha}
+    try:
+        resp = http_req.delete(api_url, headers=headers, json=payload, timeout=30)
+        if resp.status_code in (200, 204):
+            return True, ""
+        msg = resp.json().get("message", resp.text) if resp.text else f"HTTP {resp.status_code}"
+        return False, f"HTTP {resp.status_code}: {msg}"
+    except Exception as e:
+        return False, str(e)
 
 
 def read_provider_cfg_from_github() -> dict:
@@ -502,6 +547,73 @@ with tab_prompts:
             st.success("Промпты сброшены!")
             st.rerun()
 
+    # ── Context document section ──────────────────────────────────────────────
+    st.divider()
+    st.subheader("📄 Контекстный документ")
+    st.caption(
+        "Загрузите документ (txt, pdf, docx) с дополнительной информацией. "
+        "AI будет использовать его как контекст и источник данных при написании постов."
+    )
+
+    # Show current document
+    current_context = load_json(CONTEXT_FILE, {})
+    if current_context.get("text"):
+        st.info(
+            f"📎 Прикреплён: **{current_context.get('filename', 'документ')}** "
+            f"({len(current_context['text'])} символов)"
+        )
+        with st.expander("Предпросмотр документа", expanded=False):
+            preview = current_context["text"][:2000]
+            if len(current_context["text"]) > 2000:
+                preview += "\n\n[... показаны первые 2000 символов ...]"
+            st.text(preview)
+
+        if st.button("🗑️ Удалить документ", use_container_width=True):
+            if os.path.exists(CONTEXT_FILE):
+                os.remove(CONTEXT_FILE)
+            ok, err = delete_github_context()
+            if ok:
+                st.success("Документ удалён!")
+            else:
+                st.warning(f"Удалён локально, но не из GitHub: {err}")
+            st.rerun()
+    else:
+        st.caption("Документ не прикреплён")
+
+    context_file = st.file_uploader(
+        "Загрузить документ",
+        type=["txt", "pdf", "docx"],
+        key="context_doc_upload",
+    )
+    if context_file is not None:
+        try:
+            from document_parser import extract_text
+            from datetime import datetime
+
+            extracted = extract_text(context_file)
+            if not extracted.strip():
+                st.error("Не удалось извлечь текст из документа (пустой файл?)")
+            else:
+                context_data = {
+                    "filename": context_file.name,
+                    "text": extracted,
+                    "uploaded_at": datetime.now().isoformat(),
+                }
+                save_json(CONTEXT_FILE, context_data)
+                ok, err = update_github_context(context_data)
+                if ok:
+                    st.success(
+                        f"Документ «{context_file.name}» загружен и синхронизирован в GitHub! "
+                        f"({len(extracted)} символов)"
+                    )
+                else:
+                    st.warning(
+                        f"Документ сохранён локально, но синхронизация не удалась: {err}"
+                    )
+                st.rerun()
+        except Exception as exc:
+            st.error(f"Ошибка обработки документа: {exc}")
+
 # ── Tab: Create Post ─────────────────────────────────────────────────────────
 
 with tab_create:
@@ -528,11 +640,13 @@ with tab_create:
 
         with st.spinner("Генерирую текст..."):
             try:
+                _ctx = load_json(CONTEXT_FILE, {})
                 post_text, image_prompt = generate_post(
                     idea,
                     provider=env.get("TEXT_PROVIDER", "claude"),
                     system_prompt=prompts["system_prompt"],
                     image_prompt_template=prompts["image_prompt_template"],
+                    context_document=_ctx.get("text"),
                 )
                 st.session_state["post_text"] = post_text
                 st.session_state["image_prompt"] = image_prompt
@@ -1164,11 +1278,13 @@ with tab_auto:
 
             with st.spinner("Генерирую текст..."):
                 try:
+                    _ctx = load_json(CONTEXT_FILE, {})
                     post_text, image_prompt = generate_post(
                         next_idea,
                         provider=env.get("TEXT_PROVIDER", "openai"),
                         system_prompt=prompts["system_prompt"],
                         image_prompt_template=prompts["image_prompt_template"],
+                        context_document=_ctx.get("text"),
                     )
                 except Exception as e:
                     st.error(f"Ошибка генерации текста: {e}")

@@ -70,7 +70,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.check.outputs.enabled != 'false'
-        run: pip install anthropic google-genai openai replicate requests python-dotenv Pillow
+        run: pip install anthropic google-genai openai replicate requests python-dotenv Pillow pypdf python-docx
 
       - name: Read provider config
         if: steps.check.outputs.enabled != 'false'
@@ -141,7 +141,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.check.outputs.enabled != 'false'
-        run: pip install anthropic google-genai openai replicate requests python-dotenv Pillow
+        run: pip install anthropic google-genai openai replicate requests python-dotenv Pillow pypdf python-docx
 
       - name: Publish pending draft
         if: steps.check.outputs.enabled != 'false'
@@ -176,7 +176,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install anthropic google-genai openai replicate requests python-dotenv Pillow
+        run: pip install anthropic google-genai openai replicate requests python-dotenv Pillow pypdf python-docx
 
       - name: Read provider config
         id: providers
