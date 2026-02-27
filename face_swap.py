@@ -155,7 +155,7 @@ def _swap_gemini(
 
     log.info("Calling Gemini for face swap...")
     response = client.models.generate_content(
-        model="gemini-2.0-flash-exp",
+        model="gemini-3.1-flash-image-preview",
         contents=[
             prompt_text,
             types.Part.from_bytes(data=source_bytes, mime_type="image/png"),
