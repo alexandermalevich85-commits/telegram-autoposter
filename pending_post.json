@@ -1,5 +1,5 @@
 {
-  "status": "pending",
+  "status": "published",
   "created_at": "2026-02-27T05:40:16.901459",
   "idea": "Ошибки в уходе за лицом, которые старят на 10 лет",
   "idea_index": 7,
@@ -9,7 +9,7 @@
   "text_provider": "openai",
   "image_provider": "openai",
   "face_swap_provider": "",
-  "published_at": null,
-  "message_id": null,
-  "published_by": null
+  "published_at": "2026-02-27T14:10:56.689884",
+  "message_id": 393,
+  "published_by": "auto"
 }
