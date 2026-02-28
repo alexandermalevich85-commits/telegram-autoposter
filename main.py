@@ -181,8 +181,8 @@ def cmd_generate() -> None:
     # Generate image (with expert face inline for gemini provider)
     face_swap_used = ""
     inline_face = (
-        FACE_SWAP_PROVIDER in ("gemini", "openai")
-        and IMAGE_PROVIDER in ("gemini", "openai")
+        FACE_SWAP_PROVIDER == "gemini"
+        and IMAGE_PROVIDER == "gemini"
         and expert_b64
     )
 
@@ -196,7 +196,7 @@ def cmd_generate() -> None:
     if inline_face:
         face_swap_used = "gemini-inline"
         log.info("Image generated with expert face inline (single API call)")
-    elif FACE_SWAP_PROVIDER == "replicate" and expert_b64:
+    elif FACE_SWAP_PROVIDER in ("replicate", "openai") and expert_b64:
         # Replicate face swap as separate step
         log.info("Applying face swap via %s...", FACE_SWAP_PROVIDER)
         try:
@@ -324,8 +324,8 @@ def cmd_full() -> None:
         expert_b64 = load_expert_face_b64()
 
     inline_face = (
-        FACE_SWAP_PROVIDER in ("gemini", "openai")
-        and IMAGE_PROVIDER in ("gemini", "openai")
+        FACE_SWAP_PROVIDER == "gemini"
+        and IMAGE_PROVIDER == "gemini"
         and expert_b64
     )
 
@@ -338,7 +338,7 @@ def cmd_full() -> None:
 
     if inline_face:
         log.info("Image generated with expert face inline (single API call)")
-    elif FACE_SWAP_PROVIDER == "replicate" and expert_b64:
+    elif FACE_SWAP_PROVIDER in ("replicate", "openai") and expert_b64:
         log.info("Applying face swap via %s...", FACE_SWAP_PROVIDER)
         try:
             new_path = apply_face_swap(

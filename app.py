@@ -678,8 +678,8 @@ with tab_create:
                 except Exception as e:
                     st.error(f"Ошибка генерации картинки: {e}")
 
-            # Replicate face swap as separate step
-            if not inline_face and face_swap_prov == "replicate" and "image_path" in st.session_state:
+            # Face swap as separate step (replicate or openai)
+            if not inline_face and face_swap_prov in ("replicate", "openai") and "image_path" in st.session_state:
                 if expert_b64_for_swap:
                     with st.spinner(f"Применяю face swap ({face_swap_prov})..."):
                         try:
@@ -758,8 +758,8 @@ with tab_create:
                 img_prov = env.get("IMAGE_PROVIDER", "gemini")
                 expert_b64_regen = get_expert_face_b64() if face_swap_prov else None
                 inline_face = (
-                    face_swap_prov in ("gemini", "openai")
-                    and img_prov in ("gemini", "openai")
+                    face_swap_prov in ("gemini",)
+                    and img_prov == "gemini"
                     and expert_b64_regen
                 )
                 with st.spinner("Генерирую новую картинку..."):
@@ -772,8 +772,8 @@ with tab_create:
                             provider=img_prov,
                             expert_face_b64=expert_b64_regen if inline_face else None,
                         )
-                        # Replicate face swap as separate step
-                        if not inline_face and face_swap_prov == "replicate" and expert_b64_regen:
+                        # Face swap as separate step (replicate or openai)
+                        if not inline_face and face_swap_prov in ("replicate", "openai") and expert_b64_regen:
                             try:
                                 new_path = apply_face_swap(
                                     image_path,
@@ -1123,8 +1123,8 @@ with tab_auto:
                                     expert_face_b64=expert_b64_regen if inline_face else None,
                                 )
 
-                                # Replicate face swap as separate step
-                                if not inline_face and face_swap_prov == "replicate" and expert_b64_regen:
+                                # Face swap as separate step (replicate or openai)
+                                if not inline_face and face_swap_prov in ("replicate", "openai") and expert_b64_regen:
                                     try:
                                         swapped = apply_face_swap(
                                             new_image_path,
@@ -1321,8 +1321,8 @@ with tab_auto:
                 img_prov = env.get("IMAGE_PROVIDER", "openai")
                 expert_b64_draft = get_expert_face_b64() if face_swap_prov else None
                 inline_face = (
-                    face_swap_prov in ("gemini", "openai")
-                    and img_prov in ("gemini", "openai")
+                    face_swap_prov in ("gemini",)
+                    and img_prov == "gemini"
                     and expert_b64_draft
                 )
                 with st.spinner("Генерирую картинку..."):
@@ -1332,8 +1332,8 @@ with tab_auto:
                             provider=img_prov,
                             expert_face_b64=expert_b64_draft if inline_face else None,
                         )
-                        # Replicate face swap as separate step
-                        if not inline_face and face_swap_prov == "replicate" and expert_b64_draft:
+                        # Face swap as separate step (replicate or openai)
+                        if not inline_face and face_swap_prov in ("replicate", "openai") and expert_b64_draft:
                             try:
                                 new_path = apply_face_swap(
                                     img_path,
