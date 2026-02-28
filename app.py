@@ -657,19 +657,29 @@ with tab_create:
                 st.error(f"Ошибка генерации текста: {e}")
 
         if "image_prompt" in st.session_state:
+            img_prov = env.get("IMAGE_PROVIDER", "gemini")
+            expert_b64_for_swap = get_expert_face_b64() if face_swap_prov else None
+            inline_face = (
+                face_swap_prov in ("gemini",)
+                and img_prov == "gemini"
+                and expert_b64_for_swap
+            )
+
             with st.spinner("Генерирую картинку..."):
                 try:
                     image_path = generate_image(
                         st.session_state["image_prompt"],
-                        provider=env.get("IMAGE_PROVIDER", "gemini"),
+                        provider=img_prov,
+                        expert_face_b64=expert_b64_for_swap if inline_face else None,
                     )
                     st.session_state["image_path"] = image_path
+                    if inline_face:
+                        st.success("Картинка с лицом эксперта создана!")
                 except Exception as e:
                     st.error(f"Ошибка генерации картинки: {e}")
 
-            # Apply face swap if enabled (read from sidebar widget, not .env)
-            if face_swap_prov and "image_path" in st.session_state:
-                expert_b64_for_swap = get_expert_face_b64()
+            # Replicate face swap as separate step
+            if not inline_face and face_swap_prov == "replicate" and "image_path" in st.session_state:
                 if expert_b64_for_swap:
                     with st.spinner(f"Применяю face swap ({face_swap_prov})..."):
                         try:
@@ -745,6 +755,13 @@ with tab_create:
 
             if st.button("🔄 Перегенерировать картинку"):
                 env = load_env_values()
+                img_prov = env.get("IMAGE_PROVIDER", "gemini")
+                expert_b64_regen = get_expert_face_b64() if face_swap_prov else None
+                inline_face = (
+                    face_swap_prov in ("gemini",)
+                    and img_prov == "gemini"
+                    and expert_b64_regen
+                )
                 with st.spinner("Генерирую новую картинку..."):
                     try:
                         old_path = st.session_state.get("image_path")
@@ -752,24 +769,23 @@ with tab_create:
                             os.remove(old_path)
                         image_path = generate_image(
                             st.session_state["image_prompt"],
-                            provider=env.get("IMAGE_PROVIDER", "gemini"),
+                            provider=img_prov,
+                            expert_face_b64=expert_b64_regen if inline_face else None,
                         )
-                        # Apply face swap if enabled (read from sidebar widget)
-                        if face_swap_prov:
-                            expert_b64_regen = get_expert_face_b64()
-                            if expert_b64_regen:
-                                try:
-                                    new_path = apply_face_swap(
-                                        image_path,
-                                        expert_face_b64=expert_b64_regen,
-                                        method=face_swap_prov,
-                                        image_prompt=st.session_state.get("image_prompt", ""),
-                                    )
-                                    if new_path != image_path:
-                                        os.remove(image_path)
-                                        image_path = new_path
-                                except Exception:
-                                    pass
+                        # Replicate face swap as separate step
+                        if not inline_face and face_swap_prov == "replicate" and expert_b64_regen:
+                            try:
+                                new_path = apply_face_swap(
+                                    image_path,
+                                    expert_face_b64=expert_b64_regen,
+                                    method=face_swap_prov,
+                                    image_prompt=st.session_state.get("image_prompt", ""),
+                                )
+                                if new_path != image_path:
+                                    os.remove(image_path)
+                                    image_path = new_path
+                            except Exception:
+                                pass
                         st.session_state["image_path"] = image_path
                         st.rerun()
                     except Exception as e:
@@ -1090,28 +1106,37 @@ with tab_auto:
 
                     if st.button("🔄 Перегенерировать картинку", key="draft_regen_img"):
                         env = load_env_values()
+                        img_prov = env.get("IMAGE_PROVIDER", "openai")
                         with st.spinner("Генерирую новую картинку..."):
                             try:
+                                # Inline face for gemini (single API call)
+                                expert_b64_regen = get_expert_face_b64() if face_swap_prov else None
+                                inline_face = (
+                                    face_swap_prov in ("gemini",)
+                                    and img_prov == "gemini"
+                                    and expert_b64_regen
+                                )
+
                                 new_image_path = generate_image(
                                     draft_img_prompt,
-                                    provider=env.get("IMAGE_PROVIDER", "openai"),
+                                    provider=img_prov,
+                                    expert_face_b64=expert_b64_regen if inline_face else None,
                                 )
-                                # Apply face swap if enabled
-                                if face_swap_prov:
-                                    expert_b64_regen = get_expert_face_b64()
-                                    if expert_b64_regen:
-                                        try:
-                                            swapped = apply_face_swap(
-                                                new_image_path,
-                                                expert_face_b64=expert_b64_regen,
-                                                method=face_swap_prov,
-                                                image_prompt=draft_img_prompt,
-                                            )
-                                            if swapped != new_image_path:
-                                                os.remove(new_image_path)
-                                                new_image_path = swapped
-                                        except Exception as e:
-                                            st.warning(f"Face swap ошибка: {e}")
+
+                                # Replicate face swap as separate step
+                                if not inline_face and face_swap_prov == "replicate" and expert_b64_regen:
+                                    try:
+                                        swapped = apply_face_swap(
+                                            new_image_path,
+                                            expert_face_b64=expert_b64_regen,
+                                            method=face_swap_prov,
+                                            image_prompt=draft_img_prompt,
+                                        )
+                                        if swapped != new_image_path:
+                                            os.remove(new_image_path)
+                                            new_image_path = swapped
+                                    except Exception as e:
+                                        st.warning(f"Face swap ошибка: {e}")
                                 new_b64 = image_to_base64(new_image_path)
                                 os.remove(new_image_path)
 
@@ -1293,28 +1318,34 @@ with tab_auto:
                     post_text = None
 
             if post_text:
+                img_prov = env.get("IMAGE_PROVIDER", "openai")
+                expert_b64_draft = get_expert_face_b64() if face_swap_prov else None
+                inline_face = (
+                    face_swap_prov in ("gemini",)
+                    and img_prov == "gemini"
+                    and expert_b64_draft
+                )
                 with st.spinner("Генерирую картинку..."):
                     try:
                         img_path = generate_image(
                             image_prompt,
-                            provider=env.get("IMAGE_PROVIDER", "openai"),
+                            provider=img_prov,
+                            expert_face_b64=expert_b64_draft if inline_face else None,
                         )
-                        # Apply face swap if enabled (read from sidebar widget)
-                        if face_swap_prov:
-                            expert_b64_draft = get_expert_face_b64()
-                            if expert_b64_draft:
-                                try:
-                                    new_path = apply_face_swap(
-                                        img_path,
-                                        expert_face_b64=expert_b64_draft,
-                                        method=face_swap_prov,
-                                        image_prompt=image_prompt,
-                                    )
-                                    if new_path != img_path:
-                                        os.remove(img_path)
-                                        img_path = new_path
-                                except Exception as e:
-                                    st.warning(f"Face swap ошибка: {e}")
+                        # Replicate face swap as separate step
+                        if not inline_face and face_swap_prov == "replicate" and expert_b64_draft:
+                            try:
+                                new_path = apply_face_swap(
+                                    img_path,
+                                    expert_face_b64=expert_b64_draft,
+                                    method=face_swap_prov,
+                                    image_prompt=image_prompt,
+                                )
+                                if new_path != img_path:
+                                    os.remove(img_path)
+                                    img_path = new_path
+                            except Exception as e:
+                                st.warning(f"Face swap ошибка: {e}")
                         img_b64 = image_to_base64(img_path)
                         os.remove(img_path)
                     except Exception as e:

@@ -1,3 +1,4 @@
+import base64
 import io
 import os
 import tempfile
@@ -16,12 +17,30 @@ def _save_to_temp(image: Image.Image) -> str:
     return path
 
 
-def _generate_gemini(prompt: str, api_key: str | None) -> str:
+def _generate_gemini(
+    prompt: str,
+    api_key: str | None,
+    expert_face_b64: str | None = None,
+) -> str:
     from google.genai import types
+
     client = get_gemini_client(api_key_override=api_key)
+
+    if expert_face_b64:
+        # Generate image with expert's face as reference (single API call)
+        face_bytes = base64.b64decode(expert_face_b64)
+        contents = [
+            prompt
+            + "\n\nСоздай изображение, где главный персонаж имеет лицо "
+            "с приложенного референсного фото. Сохрани точное сходство лица.",
+            types.Part.from_bytes(data=face_bytes, mime_type="image/jpeg"),
+        ]
+    else:
+        contents = prompt
+
     response = client.models.generate_content(
         model="gemini-2.5-flash-image",
-        contents=prompt,
+        contents=contents,
         config=types.GenerateContentConfig(
             response_modalities=["IMAGE"],
         ),
@@ -35,8 +54,13 @@ def _generate_gemini(prompt: str, api_key: str | None) -> str:
     raise RuntimeError("Gemini API did not return an image")
 
 
-def _generate_openai(prompt: str, api_key: str | None) -> str:
+def _generate_openai(
+    prompt: str,
+    api_key: str | None,
+    expert_face_b64: str | None = None,
+) -> str:
     import openai
+
     key = api_key or OPENAI_API_KEY
     client = openai.OpenAI(api_key=key)
     response = client.images.generate(
@@ -63,6 +87,7 @@ def generate_image(
     prompt: str,
     provider: str | None = None,
     api_key: str | None = None,
+    expert_face_b64: str | None = None,
 ) -> str:
     """Generate an image from a text prompt.
 
@@ -70,6 +95,9 @@ def generate_image(
         prompt: Text description for the image.
         provider: Override IMAGE_PROVIDER from config (gemini/openai).
         api_key: Override the API key from config.
+        expert_face_b64: Base64-encoded expert face photo for reference.
+            If provided and provider is gemini, the image is generated
+            with the expert's face in a single API call (no face swap needed).
 
     Returns:
         Path to the saved PNG file.
@@ -82,4 +110,4 @@ def generate_image(
             f"Unknown IMAGE_PROVIDER: '{prov}'. "
             f"Use one of: {', '.join(_PROVIDERS)}"
         )
-    return provider_fn(prompt, api_key)
+    return provider_fn(prompt, api_key, expert_face_b64=expert_face_b64)
