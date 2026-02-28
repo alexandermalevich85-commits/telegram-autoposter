@@ -1730,6 +1730,9 @@ with tab_library:
         )
     else:
         st.warning("Библиотека пуста. Загрузите картинки ниже.")
+        if not _get_github_token():
+            st.error("🔑 GITHUB_TOKEN не задан! Без него картинки не сохраняются между перезагрузками. "
+                     "Добавьте токен в настройках (сайдбар) или в Streamlit Secrets.")
 
     # Upload section
     st.subheader("📤 Загрузить картинки")
@@ -1743,26 +1746,31 @@ with tab_library:
     if uploaded_lib_files and st.button("💾 Добавить в библиотеку", use_container_width=True):
         progress = st.progress(0)
         lib_errors = []
+        github_token = _get_github_token()
+        if not github_token:
+            st.warning("⚠️ GITHUB_TOKEN не задан — картинки сохранятся только до перезагрузки!")
         for i, uf in enumerate(uploaded_lib_files):
             try:
                 img_bytes = uf.read()
                 new_idx = lib_add_image(img_bytes, uf.name)
 
                 # Sync to GitHub
-                if _get_github_token():
+                if github_token:
                     img_file_path = os.path.join(BASE_DIR, "image_library", f"{new_idx}.json")
                     with open(img_file_path, "r", encoding="utf-8") as f:
                         img_json_content = f.read()
                     ok, err = sync_library_image_to_github(new_idx, img_json_content)
                     if not ok:
-                        lib_errors.append(f"{uf.name}: GitHub sync failed: {err}")
+                        lib_errors.append(f"{uf.name}: GitHub sync error: {err}")
             except Exception as e:
                 lib_errors.append(f"{uf.name}: {e}")
             progress.progress((i + 1) / len(uploaded_lib_files))
 
         # Sync updated index to GitHub
-        if _get_github_token():
-            sync_image_library_index_to_github(lib_load_index())
+        if github_token:
+            ok_idx, err_idx = sync_image_library_index_to_github(lib_load_index())
+            if not ok_idx:
+                st.error(f"Ошибка синхронизации индекса на GitHub: {err_idx}")
 
         if lib_errors:
             for le in lib_errors:
