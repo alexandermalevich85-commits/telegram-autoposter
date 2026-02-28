@@ -1,4 +1,4 @@
-from config import TEXT_PROVIDER, CLAUDE_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY
+from config import TEXT_PROVIDER, CLAUDE_API_KEY, OPENAI_API_KEY, get_gemini_client
 
 DEFAULT_SYSTEM_PROMPT = """\
 Ты — эксперт по естественному омоложению лица. Ты ведёшь Telegram-канал и пишешь \
@@ -59,9 +59,7 @@ def _generate_claude(idea: str, system_prompt: str, image_prompt_template: str |
 
 
 def _generate_gemini(idea: str, system_prompt: str, image_prompt_template: str | None, api_key: str | None) -> tuple[str, str]:
-    from google import genai
-    key = api_key or GEMINI_API_KEY
-    client = genai.Client(api_key=key)
+    client = get_gemini_client(api_key_override=api_key)
     response = client.models.generate_content(
         model="gemini-2.5-flash",
         contents=f"{system_prompt}\n\n{USER_MESSAGE.format(idea=idea)}",

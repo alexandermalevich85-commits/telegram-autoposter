@@ -5,7 +5,7 @@ import tempfile
 import requests
 from PIL import Image
 
-from config import IMAGE_PROVIDER, GEMINI_API_KEY, OPENAI_API_KEY
+from config import IMAGE_PROVIDER, OPENAI_API_KEY, get_gemini_client
 
 
 def _save_to_temp(image: Image.Image) -> str:
@@ -17,10 +17,8 @@ def _save_to_temp(image: Image.Image) -> str:
 
 
 def _generate_gemini(prompt: str, api_key: str | None) -> str:
-    from google import genai
     from google.genai import types
-    key = api_key or GEMINI_API_KEY
-    client = genai.Client(api_key=key)
+    client = get_gemini_client(api_key_override=api_key)
     response = client.models.generate_content(
         model="gemini-2.5-flash-image",
         contents=prompt,

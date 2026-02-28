@@ -14,7 +14,7 @@ import tempfile
 import requests
 from PIL import Image
 
-from config import GEMINI_API_KEY, OPENAI_API_KEY, REPLICATE_API_KEY
+from config import OPENAI_API_KEY, REPLICATE_API_KEY, get_gemini_client
 
 EXPERT_FACE_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "expert_face.json"
@@ -126,16 +126,11 @@ def _swap_gemini(
 ) -> str:
     """Use Gemini multimodal to regenerate image with expert's face as reference."""
     import logging
-    from google import genai
     from google.genai import types
 
     log = logging.getLogger("face_swap.gemini")
 
-    key = api_key or GEMINI_API_KEY
-    if not key:
-        raise ValueError("GEMINI_API_KEY не задан")
-
-    client = genai.Client(api_key=key)
+    client = get_gemini_client(api_key_override=api_key)
 
     # Load expert face as PIL
     expert_img = _b64_to_pil(expert_face_b64)
