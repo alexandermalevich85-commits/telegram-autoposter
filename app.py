@@ -300,6 +300,12 @@ def load_env_values() -> dict:
                 if line and not line.startswith("#") and "=" in line:
                     key, _, val = line.partition("=")
                     values[key.strip()] = val.strip()
+    # Fallback to os.environ for keys bridged from st.secrets (Streamlit Cloud)
+    for key in _SECRET_KEYS:
+        if key not in values or not values[key] or values[key].startswith("ВСТАВЬТЕ"):
+            env_val = os.environ.get(key, "")
+            if env_val:
+                values[key] = env_val
     return values
 
 
@@ -414,7 +420,7 @@ with st.sidebar:
     )
 
     replicate_key = ""
-    if face_swap_prov in ("replicate", "openai"):
+    if face_swap_prov == "replicate":
         replicate_key = st.text_input(
             "Replicate API Key",
             value=env.get("REPLICATE_API_KEY", ""),
