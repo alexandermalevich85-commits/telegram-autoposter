@@ -71,9 +71,11 @@ def _generate_openai(
         face_file.name = "expert_face.jpg"
 
         full_prompt = (
-            prompt
-            + "\n\nCreate the image where the main character has the face "
-            "from the attached reference photo. Preserve exact facial likeness."
+            "IMPORTANT: The attached photo is a reference face. "
+            "The person in the generated image MUST have exactly this face — "
+            "same facial structure, eyes, nose, lips, skin tone, and overall appearance. "
+            "Do NOT change or stylize the face. Preserve photographic facial likeness.\n\n"
+            + prompt
         )
 
         response = client.images.edit(
@@ -81,7 +83,7 @@ def _generate_openai(
             image=face_file,
             prompt=full_prompt,
             size="1024x1024",
-            quality="medium",
+            quality="high",
         )
 
         img_b64 = response.data[0].b64_json
