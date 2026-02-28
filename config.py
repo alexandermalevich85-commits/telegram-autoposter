@@ -22,6 +22,7 @@ def _get(key: str, default: str = "") -> str:
 # Provider selection
 TEXT_PROVIDER = _get("TEXT_PROVIDER", "claude").lower()    # claude | gemini | openai
 IMAGE_PROVIDER = _get("IMAGE_PROVIDER", "gemini").lower()  # gemini | openai
+IMAGE_SOURCE = _get("IMAGE_SOURCE", "generate").lower()    # generate | library
 
 # API keys
 CLAUDE_API_KEY = _get("CLAUDE_API_KEY")

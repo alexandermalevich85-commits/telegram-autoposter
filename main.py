@@ -9,7 +9,7 @@ from datetime import datetime
 
 from PIL import Image
 
-from config import TEXT_PROVIDER, IMAGE_PROVIDER, FACE_SWAP_PROVIDER
+from config import TEXT_PROVIDER, IMAGE_PROVIDER, FACE_SWAP_PROVIDER, IMAGE_SOURCE
 from generate_text import generate_post
 from generate_image import generate_image
 from face_swap import apply_face_swap
@@ -172,54 +172,73 @@ def cmd_generate() -> None:
     log.info("Post text generated (%d chars)", len(post_text))
     log.info("Image prompt: %s", image_prompt[:100])
 
-    # Load expert face for inline generation (gemini) or face swap (replicate)
-    expert_b64 = None
-    if FACE_SWAP_PROVIDER:
-        from face_swap import load_expert_face_b64
-        expert_b64 = load_expert_face_b64()
-
-    # Generate image (with expert face inline for gemini provider)
+    # Get image — either from library or AI generation
     face_swap_used = ""
-    inline_face = (
-        FACE_SWAP_PROVIDER == "gemini"
-        and IMAGE_PROVIDER == "gemini"
-        and expert_b64
-    )
+    image_path = None
 
-    log.info("Generating image via %s...", IMAGE_PROVIDER)
-    image_path = generate_image(
-        image_prompt,
-        expert_face_b64=expert_b64 if inline_face else None,
-    )
-    log.info("Image saved to %s", image_path)
+    if IMAGE_SOURCE == "library":
+        # Library mode: use pre-uploaded image
+        from image_library import get_next_image, advance_pointer, count as lib_count
+        if lib_count() == 0:
+            log.error("Image library is empty but IMAGE_SOURCE=library!")
+            sys.exit(1)
+        log.info("Taking next image from library...")
+        lib_b64, lib_idx = get_next_image()
+        if not lib_b64:
+            log.error("Failed to load image from library")
+            sys.exit(1)
+        advance_pointer()
+        log.info("Using library image #%d", lib_idx)
+        image_b64 = lib_b64
+    else:
+        # AI generation mode (existing logic)
+        # Load expert face for inline generation (gemini) or face swap (replicate)
+        expert_b64 = None
+        if FACE_SWAP_PROVIDER:
+            from face_swap import load_expert_face_b64
+            expert_b64 = load_expert_face_b64()
 
-    if inline_face:
-        face_swap_used = "gemini-inline"
-        log.info("Image generated with expert face inline (single API call)")
-    elif FACE_SWAP_PROVIDER in ("replicate", "openai") and expert_b64:
-        # Replicate face swap as separate step
-        log.info("Applying face swap via %s...", FACE_SWAP_PROVIDER)
-        try:
-            new_path = apply_face_swap(
-                image_path,
-                expert_face_b64=expert_b64,
-                method=FACE_SWAP_PROVIDER,
-                image_prompt=image_prompt,
-            )
-            if new_path != image_path:
-                try:
-                    os.remove(image_path)
-                except OSError:
-                    pass
-                image_path = new_path
-                face_swap_used = FACE_SWAP_PROVIDER
-                log.info("Face swap applied successfully")
-        except Exception as e:
-            log.warning("Face swap failed, using original image: %s", e)
+        # Generate image (with expert face inline for gemini provider)
+        inline_face = (
+            FACE_SWAP_PROVIDER == "gemini"
+            and IMAGE_PROVIDER == "gemini"
+            and expert_b64
+        )
 
-    # Encode image to base64
-    image_b64 = image_to_base64(image_path)
-    log.info("Image encoded to base64 (%d chars)", len(image_b64))
+        log.info("Generating image via %s...", IMAGE_PROVIDER)
+        image_path = generate_image(
+            image_prompt,
+            expert_face_b64=expert_b64 if inline_face else None,
+        )
+        log.info("Image saved to %s", image_path)
+
+        if inline_face:
+            face_swap_used = "gemini-inline"
+            log.info("Image generated with expert face inline (single API call)")
+        elif FACE_SWAP_PROVIDER in ("replicate", "openai") and expert_b64:
+            # Replicate face swap as separate step
+            log.info("Applying face swap via %s...", FACE_SWAP_PROVIDER)
+            try:
+                new_path = apply_face_swap(
+                    image_path,
+                    expert_face_b64=expert_b64,
+                    method=FACE_SWAP_PROVIDER,
+                    image_prompt=image_prompt,
+                )
+                if new_path != image_path:
+                    try:
+                        os.remove(image_path)
+                    except OSError:
+                        pass
+                    image_path = new_path
+                    face_swap_used = FACE_SWAP_PROVIDER
+                    log.info("Face swap applied successfully")
+            except Exception as e:
+                log.warning("Face swap failed, using original image: %s", e)
+
+        # Encode image to base64
+        image_b64 = image_to_base64(image_path)
+        log.info("Image encoded to base64 (%d chars)", len(image_b64))
 
     # Save pending draft
     save_pending({
@@ -231,7 +250,7 @@ def cmd_generate() -> None:
         "image_prompt": image_prompt,
         "image_base64": image_b64,
         "text_provider": TEXT_PROVIDER,
-        "image_provider": IMAGE_PROVIDER,
+        "image_provider": "library" if IMAGE_SOURCE == "library" else IMAGE_PROVIDER,
         "face_swap_provider": face_swap_used,
         "published_at": None,
         "message_id": None,
@@ -240,10 +259,11 @@ def cmd_generate() -> None:
     log.info("Draft saved to pending_post.json")
 
     # Cleanup temp image
-    try:
-        os.remove(image_path)
-    except OSError:
-        pass
+    if image_path:
+        try:
+            os.remove(image_path)
+        except OSError:
+            pass
 
     log.info("Phase 1 done! Draft is ready for review.")
 
@@ -317,45 +337,63 @@ def cmd_full() -> None:
     log.info("Post text generated (%d chars)", len(post_text))
     log.info("Image prompt: %s", image_prompt[:100])
 
-    # Load expert face
-    expert_b64 = None
-    if FACE_SWAP_PROVIDER:
-        from face_swap import load_expert_face_b64
-        expert_b64 = load_expert_face_b64()
+    image_path = None
 
-    inline_face = (
-        FACE_SWAP_PROVIDER == "gemini"
-        and IMAGE_PROVIDER == "gemini"
-        and expert_b64
-    )
+    if IMAGE_SOURCE == "library":
+        # Library mode
+        from image_library import get_next_image, advance_pointer, count as lib_count
+        if lib_count() == 0:
+            log.error("Image library is empty but IMAGE_SOURCE=library!")
+            sys.exit(1)
+        log.info("Taking next image from library...")
+        lib_b64, lib_idx = get_next_image()
+        if not lib_b64:
+            log.error("Failed to load image from library")
+            sys.exit(1)
+        advance_pointer()
+        log.info("Using library image #%d", lib_idx)
+        # Write to temp file for send_post
+        image_path = base64_to_tempfile(lib_b64)
+    else:
+        # AI generation mode (existing logic)
+        expert_b64 = None
+        if FACE_SWAP_PROVIDER:
+            from face_swap import load_expert_face_b64
+            expert_b64 = load_expert_face_b64()
 
-    log.info("Generating image via %s...", IMAGE_PROVIDER)
-    image_path = generate_image(
-        image_prompt,
-        expert_face_b64=expert_b64 if inline_face else None,
-    )
-    log.info("Image saved to %s", image_path)
+        inline_face = (
+            FACE_SWAP_PROVIDER == "gemini"
+            and IMAGE_PROVIDER == "gemini"
+            and expert_b64
+        )
 
-    if inline_face:
-        log.info("Image generated with expert face inline (single API call)")
-    elif FACE_SWAP_PROVIDER in ("replicate", "openai") and expert_b64:
-        log.info("Applying face swap via %s...", FACE_SWAP_PROVIDER)
-        try:
-            new_path = apply_face_swap(
-                image_path,
-                expert_face_b64=expert_b64,
-                method=FACE_SWAP_PROVIDER,
-                image_prompt=image_prompt,
-            )
-            if new_path != image_path:
-                try:
-                    os.remove(image_path)
-                except OSError:
-                    pass
-                image_path = new_path
-                log.info("Face swap applied successfully")
-        except Exception as e:
-            log.warning("Face swap failed, using original image: %s", e)
+        log.info("Generating image via %s...", IMAGE_PROVIDER)
+        image_path = generate_image(
+            image_prompt,
+            expert_face_b64=expert_b64 if inline_face else None,
+        )
+        log.info("Image saved to %s", image_path)
+
+        if inline_face:
+            log.info("Image generated with expert face inline (single API call)")
+        elif FACE_SWAP_PROVIDER in ("replicate", "openai") and expert_b64:
+            log.info("Applying face swap via %s...", FACE_SWAP_PROVIDER)
+            try:
+                new_path = apply_face_swap(
+                    image_path,
+                    expert_face_b64=expert_b64,
+                    method=FACE_SWAP_PROVIDER,
+                    image_prompt=image_prompt,
+                )
+                if new_path != image_path:
+                    try:
+                        os.remove(image_path)
+                    except OSError:
+                        pass
+                    image_path = new_path
+                    log.info("Face swap applied successfully")
+            except Exception as e:
+                log.warning("Face swap failed, using original image: %s", e)
 
     log.info("Sending to Telegram...")
     result = send_post(image_path, post_text)
@@ -369,10 +407,11 @@ def cmd_full() -> None:
     add_history_entry(idea, post_text, message_id)
     log.info("History entry saved")
 
-    try:
-        os.remove(image_path)
-    except OSError:
-        pass
+    if image_path:
+        try:
+            os.remove(image_path)
+        except OSError:
+            pass
 
     log.info("Done!")
 

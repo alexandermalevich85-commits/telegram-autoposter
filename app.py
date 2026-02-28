@@ -12,7 +12,7 @@ from PIL import Image
 # Bridge st.secrets → os.environ BEFORE importing project modules
 # so that config.py (which uses os.getenv) picks up Streamlit Cloud secrets.
 _SECRET_KEYS = [
-    "TEXT_PROVIDER", "IMAGE_PROVIDER",
+    "TEXT_PROVIDER", "IMAGE_PROVIDER", "IMAGE_SOURCE",
     "CLAUDE_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY",
     "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHANNEL_ID", "GITHUB_TOKEN",
     "FACE_SWAP_PROVIDER", "REPLICATE_API_KEY",
@@ -137,6 +137,7 @@ def update_github_provider_cfg(
     image_provider: str,
     autopublish_enabled: bool | None = None,
     face_swap_provider: str | None = None,
+    image_source: str | None = None,
 ) -> tuple[bool, str]:
     """Update provider.cfg in GitHub repo.
 
@@ -157,12 +158,16 @@ def update_github_provider_cfg(
     if face_swap_provider is None:
         face_swap_provider = current.get("FACE_SWAP_PROVIDER", "")
 
+    if image_source is None:
+        image_source = current.get("IMAGE_SOURCE", "generate")
+
     enabled_str = "true" if autopublish_enabled else "false"
     new_content = (
         f"TEXT_PROVIDER={text_provider}\n"
         f"IMAGE_PROVIDER={image_provider}\n"
         f"AUTOPUBLISH_ENABLED={enabled_str}\n"
         f"FACE_SWAP_PROVIDER={face_swap_provider}\n"
+        f"IMAGE_SOURCE={image_source}\n"
     )
 
     return write_github_file(
@@ -170,7 +175,8 @@ def update_github_provider_cfg(
         new_content,
         sha,
         f"Update config: text={text_provider}, image={image_provider}, "
-        f"autopublish={enabled_str}, face_swap={face_swap_provider}",
+        f"autopublish={enabled_str}, face_swap={face_swap_provider}, "
+        f"image_source={image_source}",
     )
 
 
@@ -257,6 +263,57 @@ def read_provider_cfg_from_github() -> dict:
                 key, _, val = line.partition("=")
                 result[key.strip()] = val.strip()
     return result
+
+
+# ── Image Library GitHub helpers ─────────────────────────────────────────────
+
+IMAGE_LIBRARY_INDEX_PATH = "image_library.json"
+IMAGE_LIBRARY_DIR_PATH = "image_library"
+
+
+def sync_image_library_index_to_github(index_data: dict) -> tuple[bool, str]:
+    """Sync image_library.json to GitHub."""
+    content, sha = read_github_file(IMAGE_LIBRARY_INDEX_PATH)
+    new_content = json.dumps(index_data, ensure_ascii=False, indent=2)
+    return write_github_file(
+        IMAGE_LIBRARY_INDEX_PATH,
+        new_content,
+        sha,
+        "Update image library index [streamlit]",
+    )
+
+
+def sync_library_image_to_github(idx: int, img_json: str) -> tuple[bool, str]:
+    """Upload a single library image file to GitHub."""
+    path = f"{IMAGE_LIBRARY_DIR_PATH}/{idx}.json"
+    _, sha = read_github_file(path)
+    return write_github_file(
+        path, img_json, sha,
+        f"Add image #{idx} to library [streamlit]",
+    )
+
+
+def delete_library_image_from_github(idx: int) -> tuple[bool, str]:
+    """Delete a single library image file from GitHub."""
+    path = f"{IMAGE_LIBRARY_DIR_PATH}/{idx}.json"
+    _, sha = read_github_file(path)
+    if not sha:
+        return True, ""
+
+    headers = _github_headers()
+    if not headers:
+        return False, "GITHUB_TOKEN не задан"
+
+    api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{path}"
+    payload = {"message": f"Remove image #{idx} from library [streamlit]", "sha": sha}
+    try:
+        resp = http_requests.delete(api_url, headers=headers, json=payload, timeout=30)
+        if resp.status_code in (200, 204):
+            return True, ""
+        msg = resp.json().get("message", resp.text) if resp.text else f"HTTP {resp.status_code}"
+        return False, f"HTTP {resp.status_code}: {msg}"
+    except Exception as e:
+        return False, str(e)
 
 
 # ── Local helpers ────────────────────────────────────────────────────────────
@@ -383,13 +440,38 @@ with st.sidebar:
         if env.get("TEXT_PROVIDER", "claude") in ["claude", "gemini", "openai"]
         else 0,
     )
-    image_prov = st.selectbox(
-        "Провайдер картинок",
-        ["gemini", "openai"],
-        index=["gemini", "openai"].index(env.get("IMAGE_PROVIDER", "gemini"))
-        if env.get("IMAGE_PROVIDER", "gemini") in ["gemini", "openai"]
-        else 0,
+
+    st.divider()
+    st.subheader("🖼️ Источник картинок")
+
+    image_source_options = ["generate", "library"]
+    image_source_labels = ["AI-генерация", "Библиотека картинок"]
+    current_img_src = env.get("IMAGE_SOURCE", "generate")
+    img_src_index = image_source_options.index(current_img_src) if current_img_src in image_source_options else 0
+    image_source = st.radio(
+        "Откуда брать картинки для постов",
+        image_source_options,
+        index=img_src_index,
+        format_func=lambda x: image_source_labels[image_source_options.index(x)],
+        horizontal=True,
     )
+
+    if image_source == "generate":
+        image_prov = st.selectbox(
+            "Провайдер картинок",
+            ["gemini", "openai"],
+            index=["gemini", "openai"].index(env.get("IMAGE_PROVIDER", "gemini"))
+            if env.get("IMAGE_PROVIDER", "gemini") in ["gemini", "openai"]
+            else 0,
+        )
+    else:
+        image_prov = env.get("IMAGE_PROVIDER", "gemini")
+        from image_library import count as lib_count
+        lib_total = lib_count()
+        if lib_total > 0:
+            st.success(f"В библиотеке: **{lib_total}** картинок")
+        else:
+            st.warning("Библиотека пуста! Загрузите картинки во вкладке «Библиотека»")
 
     st.divider()
     st.subheader("🔑 API-ключи")
@@ -408,16 +490,20 @@ with st.sidebar:
     st.subheader("🎭 Face Swap")
     st.caption("Замена лица на фото эксперта")
 
-    face_swap_options = ["", "replicate", "gemini", "openai"]
-    face_swap_labels = ["Выключено", "Replicate (лучшее качество)", "Gemini (бесплатно)", "OpenAI gpt-image-1"]
-    current_fs = env.get("FACE_SWAP_PROVIDER", "")
-    fs_index = face_swap_options.index(current_fs) if current_fs in face_swap_options else 0
-    face_swap_prov = st.selectbox(
-        "Метод замены лица",
-        face_swap_options,
-        index=fs_index,
-        format_func=lambda x: face_swap_labels[face_swap_options.index(x)],
-    )
+    if image_source == "generate":
+        face_swap_options = ["", "replicate", "gemini", "openai"]
+        face_swap_labels = ["Выключено", "Replicate (лучшее качество)", "Gemini (бесплатно)", "OpenAI gpt-image-1"]
+        current_fs = env.get("FACE_SWAP_PROVIDER", "")
+        fs_index = face_swap_options.index(current_fs) if current_fs in face_swap_options else 0
+        face_swap_prov = st.selectbox(
+            "Метод замены лица",
+            face_swap_options,
+            index=fs_index,
+            format_func=lambda x: face_swap_labels[face_swap_options.index(x)],
+        )
+    else:
+        face_swap_prov = ""
+        st.info("Face swap не используется в режиме «Библиотека»")
 
     replicate_key = ""
     if face_swap_prov == "replicate":
@@ -428,21 +514,24 @@ with st.sidebar:
         )
 
     # Expert face upload
-    st.caption("Фото эксперта (для замены лица)")
-    expert_face_file = st.file_uploader(
-        "Загрузить фото эксперта",
-        type=["jpg", "jpeg", "png"],
-        key="expert_face_upload",
-    )
+    if image_source == "generate":
+        st.caption("Фото эксперта (для замены лица)")
+        expert_face_file = st.file_uploader(
+            "Загрузить фото эксперта",
+            type=["jpg", "jpeg", "png"],
+            key="expert_face_upload",
+        )
 
-    # Show current expert face status
-    expert_b64 = get_expert_face_b64()
-    if expert_b64:
-        st.success("Фото эксперта загружено ✅")
-        if st.checkbox("Показать фото", key="show_expert_face"):
-            st.image(base64.b64decode(expert_b64), width=150)
+        # Show current expert face status
+        expert_b64 = get_expert_face_b64()
+        if expert_b64:
+            st.success("Фото эксперта загружено ✅")
+            if st.checkbox("Показать фото", key="show_expert_face"):
+                st.image(base64.b64decode(expert_b64), width=150)
+        else:
+            st.info("Фото эксперта не загружено")
     else:
-        st.info("Фото эксперта не загружено")
+        expert_face_file = None
 
     if expert_face_file is not None:
         # Save expert face locally and to GitHub
@@ -476,6 +565,7 @@ with st.sidebar:
         env_data = {
             "TEXT_PROVIDER": text_prov,
             "IMAGE_PROVIDER": image_prov,
+            "IMAGE_SOURCE": image_source,
             "CLAUDE_API_KEY": claude_key,
             "GEMINI_API_KEY": gemini_key,
             "OPENAI_API_KEY": openai_key,
@@ -494,6 +584,7 @@ with st.sidebar:
                 ok, err = update_github_provider_cfg(
                     text_prov, image_prov,
                     face_swap_provider=face_swap_prov,
+                    image_source=image_source,
                 )
                 if ok:
                     st.success("Провайдеры синхронизированы с GitHub ✅")
@@ -506,8 +597,8 @@ with st.sidebar:
 
 # ── Tabs ─────────────────────────────────────────────────────────────────────
 
-tab_prompts, tab_ideas, tab_create, tab_auto, tab_history = st.tabs(
-    ["✏️ Промпты", "📋 Идеи", "🚀 Создать пост", "⏰ Автопубликация", "📊 История"]
+tab_prompts, tab_ideas, tab_create, tab_auto, tab_history, tab_library = st.tabs(
+    ["✏️ Промпты", "📋 Идеи", "🚀 Создать пост", "⏰ Автопубликация", "📊 История", "🖼️ Библиотека"]
 )
 
 # ── Tab: Prompts ─────────────────────────────────────────────────────────────
@@ -702,51 +793,73 @@ with tab_create:
                 st.error(f"Ошибка генерации текста: {e}")
 
         if "image_prompt" in st.session_state:
-            img_prov = env.get("IMAGE_PROVIDER", "gemini")
-            expert_b64_for_swap = get_expert_face_b64() if face_swap_prov else None
-            inline_face = (
-                face_swap_prov == "gemini"
-                and img_prov == "gemini"
-                and expert_b64_for_swap
-            )
+            if image_source == "library":
+                # Library mode: take next image from library
+                from image_library import get_next_image as _lib_get_next, advance_pointer as _lib_advance
+                with st.spinner("Загружаю картинку из библиотеки..."):
+                    _lib_b64, _lib_idx = _lib_get_next()
+                    if _lib_b64:
+                        tmp_path = base64_to_tempfile(_lib_b64)
+                        st.session_state["image_path"] = tmp_path
+                        st.session_state["image_from_library"] = True
+                        _lib_advance()
+                        if _get_github_token():
+                            from image_library import load_index as _lib_idx_load
+                            sync_image_library_index_to_github(_lib_idx_load())
+                        st.success(f"Картинка #{_lib_idx} из библиотеки")
+                    else:
+                        st.error("Библиотека картинок пуста! Загрузите картинки во вкладке «Библиотека».")
+            else:
+                # AI generation mode (existing logic)
+                img_prov = env.get("IMAGE_PROVIDER", "gemini")
+                expert_b64_for_swap = get_expert_face_b64() if face_swap_prov else None
+                inline_face = (
+                    face_swap_prov == "gemini"
+                    and img_prov == "gemini"
+                    and expert_b64_for_swap
+                )
 
-            with st.spinner("Генерирую картинку..."):
-                try:
-                    image_path = generate_image(
-                        st.session_state["image_prompt"],
-                        provider=img_prov,
-                        expert_face_b64=expert_b64_for_swap if inline_face else None,
-                        reference_image_b64=st.session_state.get("reference_image_b64"),
-                    )
-                    st.session_state["image_path"] = image_path
-                    if inline_face:
-                        st.success("Картинка с лицом эксперта создана!")
-                except Exception as e:
-                    st.error(f"Ошибка генерации картинки: {e}")
+                with st.spinner("Генерирую картинку..."):
+                    try:
+                        image_path = generate_image(
+                            st.session_state["image_prompt"],
+                            provider=img_prov,
+                            expert_face_b64=expert_b64_for_swap if inline_face else None,
+                            reference_image_b64=st.session_state.get("reference_image_b64"),
+                        )
+                        st.session_state["image_path"] = image_path
+                        if inline_face:
+                            st.success("Картинка с лицом эксперта создана!")
+                    except Exception as e:
+                        st.error(f"Ошибка генерации картинки: {e}")
 
-            # Face swap as separate step (replicate or openai)
-            if not inline_face and face_swap_prov in ("replicate", "openai") and "image_path" in st.session_state:
-                if expert_b64_for_swap:
-                    with st.spinner(f"Применяю face swap ({face_swap_prov})..."):
-                        try:
-                            new_path = apply_face_swap(
-                                st.session_state["image_path"],
-                                expert_face_b64=expert_b64_for_swap,
-                                method=face_swap_prov,
-                                image_prompt=st.session_state.get("image_prompt", ""),
-                            )
-                            if new_path != st.session_state["image_path"]:
-                                old = st.session_state["image_path"]
-                                st.session_state["image_path"] = new_path
-                                try:
-                                    os.remove(old)
-                                except OSError:
-                                    pass
-                                st.success("Face swap применён!")
-                        except Exception as e:
-                            st.warning(f"Face swap ошибка: {e}. Используется оригинал.")
-                else:
-                    st.info("Face swap пропущен (фото эксперта не загружено)")
+                # Face swap as separate step (replicate or openai)
+                if not inline_face and face_swap_prov in ("replicate", "openai") and "image_path" in st.session_state:
+                    if expert_b64_for_swap:
+                        with st.spinner(f"Применяю face swap ({face_swap_prov})..."):
+                            try:
+                                new_path = apply_face_swap(
+                                    st.session_state["image_path"],
+                                    expert_face_b64=expert_b64_for_swap,
+                                    method=face_swap_prov,
+                                    image_prompt=st.session_state.get("image_prompt", ""),
+                                )
+                                if new_path != st.session_state["image_path"]:
+                                    old = st.session_state["image_path"]
+                                    st.session_state["image_path"] = new_path
+                                    try:
+                                        os.remove(old)
+                                    except OSError:
+                                        pass
+                                    st.success("Face swap применён!")
+                            except Exception as e:
+                                st.warning(f"Face swap ошибка: {e}. Используется оригинал.")
+                    else:
+                        st.info("Face swap пропущен (фото эксперта не загружено)")
+                elif not inline_face and face_swap_prov and face_swap_prov not in ("replicate", "openai"):
+                    st.info(f"Face swap: провайдер '{face_swap_prov}' не поддерживает отдельный шаг")
+                elif not inline_face and not face_swap_prov:
+                    pass  # Face swap выключен — молчим
 
     # Preview
     if "post_text" in st.session_state:
@@ -812,45 +925,65 @@ with tab_create:
             if st.session_state.get("reference_image_b64"):
                 st.caption("Референсное фото загружено ✅")
 
-            if st.button("🔄 Перегенерировать картинку"):
-                env = load_env_values()
-                img_prov = env.get("IMAGE_PROVIDER", "gemini")
-                expert_b64_regen = get_expert_face_b64() if face_swap_prov else None
-                inline_face = (
-                    face_swap_prov in ("gemini",)
-                    and img_prov == "gemini"
-                    and expert_b64_regen
-                )
-                ref_b64 = st.session_state.get("reference_image_b64")
-                with st.spinner("Генерирую новую картинку..."):
-                    try:
+            if image_source == "library":
+                if st.button("➡️ Следующая из библиотеки"):
+                    from image_library import get_next_image as _regen_lib_get, advance_pointer as _regen_lib_adv
+                    _r_b64, _r_idx = _regen_lib_get()
+                    if _r_b64:
                         old_path = st.session_state.get("image_path")
                         if old_path and os.path.exists(old_path):
-                            os.remove(old_path)
-                        image_path = generate_image(
-                            st.session_state["image_prompt"],
-                            provider=img_prov,
-                            expert_face_b64=expert_b64_regen if inline_face else None,
-                            reference_image_b64=ref_b64,
-                        )
-                        # Face swap as separate step (replicate or openai)
-                        if not inline_face and face_swap_prov in ("replicate", "openai") and expert_b64_regen:
                             try:
-                                new_path = apply_face_swap(
-                                    image_path,
-                                    expert_face_b64=expert_b64_regen,
-                                    method=face_swap_prov,
-                                    image_prompt=st.session_state.get("image_prompt", ""),
-                                )
-                                if new_path != image_path:
-                                    os.remove(image_path)
-                                    image_path = new_path
-                            except Exception:
+                                os.remove(old_path)
+                            except OSError:
                                 pass
-                        st.session_state["image_path"] = image_path
+                        st.session_state["image_path"] = base64_to_tempfile(_r_b64)
+                        _regen_lib_adv()
+                        if _get_github_token():
+                            from image_library import load_index as _regen_lib_idx
+                            sync_image_library_index_to_github(_regen_lib_idx())
                         st.rerun()
-                    except Exception as e:
-                        st.error(f"Ошибка: {e}")
+                    else:
+                        st.error("Библиотека пуста!")
+            else:
+                if st.button("🔄 Перегенерировать картинку"):
+                    env = load_env_values()
+                    img_prov = env.get("IMAGE_PROVIDER", "gemini")
+                    expert_b64_regen = get_expert_face_b64() if face_swap_prov else None
+                    inline_face = (
+                        face_swap_prov in ("gemini",)
+                        and img_prov == "gemini"
+                        and expert_b64_regen
+                    )
+                    ref_b64 = st.session_state.get("reference_image_b64")
+                    with st.spinner("Генерирую новую картинку..."):
+                        try:
+                            old_path = st.session_state.get("image_path")
+                            if old_path and os.path.exists(old_path):
+                                os.remove(old_path)
+                            image_path = generate_image(
+                                st.session_state["image_prompt"],
+                                provider=img_prov,
+                                expert_face_b64=expert_b64_regen if inline_face else None,
+                                reference_image_b64=ref_b64,
+                            )
+                            # Face swap as separate step (replicate or openai)
+                            if not inline_face and face_swap_prov in ("replicate", "openai") and expert_b64_regen:
+                                try:
+                                    new_path = apply_face_swap(
+                                        image_path,
+                                        expert_face_b64=expert_b64_regen,
+                                        method=face_swap_prov,
+                                        image_prompt=st.session_state.get("image_prompt", ""),
+                                    )
+                                    if new_path != image_path:
+                                        os.remove(image_path)
+                                        image_path = new_path
+                                except Exception:
+                                    pass
+                            st.session_state["image_path"] = image_path
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Ошибка: {e}")
 
         # Publish
         st.divider()
@@ -1177,59 +1310,83 @@ with tab_auto:
                         ref_img.save(buf, format="JPEG", quality=85)
                         draft_ref_b64 = base64.b64encode(buf.getvalue()).decode()
 
-                    if st.button("🔄 Перегенерировать картинку", key="draft_regen_img"):
-                        env = load_env_values()
-                        img_prov = env.get("IMAGE_PROVIDER", "openai")
-                        with st.spinner("Генерирую новую картинку..."):
-                            try:
-                                # Inline face for gemini (single API call)
-                                expert_b64_regen = get_expert_face_b64() if face_swap_prov else None
-                                inline_face = (
-                                    face_swap_prov in ("gemini",)
-                                    and img_prov == "gemini"
-                                    and expert_b64_regen
-                                )
-
-                                new_image_path = generate_image(
-                                    draft_img_prompt,
-                                    provider=img_prov,
-                                    expert_face_b64=expert_b64_regen if inline_face else None,
-                                    reference_image_b64=draft_ref_b64,
-                                )
-
-                                # Face swap as separate step (replicate or openai)
-                                if not inline_face and face_swap_prov in ("replicate", "openai") and expert_b64_regen:
-                                    try:
-                                        swapped = apply_face_swap(
-                                            new_image_path,
-                                            expert_face_b64=expert_b64_regen,
-                                            method=face_swap_prov,
-                                            image_prompt=draft_img_prompt,
-                                        )
-                                        if swapped != new_image_path:
-                                            os.remove(new_image_path)
-                                            new_image_path = swapped
-                                    except Exception as e:
-                                        st.warning(f"Face swap ошибка: {e}")
-                                new_b64 = image_to_base64(new_image_path)
-                                os.remove(new_image_path)
-
-                                # Update pending on GitHub
-                                pending["image_base64"] = new_b64
-                                pending["image_prompt"] = draft_img_prompt
+                    if image_source == "library":
+                        if st.button("➡️ Следующая из библиотеки", key="draft_next_lib_img"):
+                            from image_library import get_next_image as _draft_lib_get, advance_pointer as _draft_lib_adv
+                            _dl_b64, _dl_idx = _draft_lib_get()
+                            if _dl_b64:
+                                pending["image_base64"] = _dl_b64
+                                _draft_lib_adv()
                                 ok, err = write_github_file(
                                     PENDING_POST_PATH,
                                     json.dumps(pending, ensure_ascii=False, indent=2),
                                     pending_sha,
-                                    "Update draft: regenerated image [manual]",
+                                    f"Update draft: library image #{_dl_idx} [manual]",
                                 )
+                                if _get_github_token():
+                                    from image_library import load_index as _draft_lib_idx
+                                    sync_image_library_index_to_github(_draft_lib_idx())
                                 if ok:
-                                    st.success("Картинка обновлена!")
+                                    st.success(f"Картинка #{_dl_idx} из библиотеки!")
                                     st.rerun()
                                 else:
-                                    st.error(f"Ошибка сохранения на GitHub: {err}")
-                            except Exception as e:
-                                st.error(f"Ошибка: {e}")
+                                    st.error(f"Ошибка: {err}")
+                            else:
+                                st.error("Библиотека пуста!")
+                    else:
+                        if st.button("🔄 Перегенерировать картинку", key="draft_regen_img"):
+                            env = load_env_values()
+                            img_prov = env.get("IMAGE_PROVIDER", "openai")
+                            with st.spinner("Генерирую новую картинку..."):
+                                try:
+                                    # Inline face for gemini (single API call)
+                                    expert_b64_regen = get_expert_face_b64() if face_swap_prov else None
+                                    inline_face = (
+                                        face_swap_prov in ("gemini",)
+                                        and img_prov == "gemini"
+                                        and expert_b64_regen
+                                    )
+
+                                    new_image_path = generate_image(
+                                        draft_img_prompt,
+                                        provider=img_prov,
+                                        expert_face_b64=expert_b64_regen if inline_face else None,
+                                        reference_image_b64=draft_ref_b64,
+                                    )
+
+                                    # Face swap as separate step (replicate or openai)
+                                    if not inline_face and face_swap_prov in ("replicate", "openai") and expert_b64_regen:
+                                        try:
+                                            swapped = apply_face_swap(
+                                                new_image_path,
+                                                expert_face_b64=expert_b64_regen,
+                                                method=face_swap_prov,
+                                                image_prompt=draft_img_prompt,
+                                            )
+                                            if swapped != new_image_path:
+                                                os.remove(new_image_path)
+                                                new_image_path = swapped
+                                        except Exception as e:
+                                            st.warning(f"Face swap ошибка: {e}")
+                                    new_b64 = image_to_base64(new_image_path)
+                                    os.remove(new_image_path)
+
+                                    # Update pending on GitHub
+                                    pending["image_base64"] = new_b64
+                                    pending["image_prompt"] = draft_img_prompt
+                                    ok, err = write_github_file(
+                                        PENDING_POST_PATH,
+                                        json.dumps(pending, ensure_ascii=False, indent=2),
+                                        pending_sha,
+                                        "Update draft: regenerated image [manual]",
+                                    )
+                                    if ok:
+                                        st.success("Картинка обновлена!")
+                                        st.rerun()
+                                    else:
+                                        st.error(f"Ошибка сохранения на GitHub: {err}")
+                                except Exception as e:
+                                    st.error(f"Ошибка: {e}")
 
                 # ── Action buttons ───────────────────────────────────────
                 st.divider()
@@ -1405,40 +1562,56 @@ with tab_auto:
                     post_text = None
 
             if post_text:
-                img_prov = env.get("IMAGE_PROVIDER", "openai")
-                expert_b64_draft = get_expert_face_b64() if face_swap_prov else None
-                inline_face = (
-                    face_swap_prov in ("gemini",)
-                    and img_prov == "gemini"
-                    and expert_b64_draft
-                )
-                with st.spinner("Генерирую картинку..."):
-                    try:
-                        img_path = generate_image(
-                            image_prompt,
-                            provider=img_prov,
-                            expert_face_b64=expert_b64_draft if inline_face else None,
-                            reference_image_b64=st.session_state.get("reference_image_b64"),
-                        )
-                        # Face swap as separate step (replicate or openai)
-                        if not inline_face and face_swap_prov in ("replicate", "openai") and expert_b64_draft:
-                            try:
-                                new_path = apply_face_swap(
-                                    img_path,
-                                    expert_face_b64=expert_b64_draft,
-                                    method=face_swap_prov,
-                                    image_prompt=image_prompt,
-                                )
-                                if new_path != img_path:
-                                    os.remove(img_path)
-                                    img_path = new_path
-                            except Exception as e:
-                                st.warning(f"Face swap ошибка: {e}")
-                        img_b64 = image_to_base64(img_path)
-                        os.remove(img_path)
-                    except Exception as e:
-                        st.error(f"Ошибка генерации картинки: {e}")
-                        img_b64 = None
+                img_b64 = None
+
+                if image_source == "library":
+                    # Library mode
+                    from image_library import get_next_image as _mg_lib_get, advance_pointer as _mg_lib_adv
+                    with st.spinner("Загружаю картинку из библиотеки..."):
+                        _mg_b64, _mg_idx = _mg_lib_get()
+                        if _mg_b64:
+                            img_b64 = _mg_b64
+                            _mg_lib_adv()
+                            if _get_github_token():
+                                from image_library import load_index as _mg_lib_idx
+                                sync_image_library_index_to_github(_mg_lib_idx())
+                        else:
+                            st.error("Библиотека пуста! Загрузите картинки во вкладке «Библиотека».")
+                else:
+                    # AI generation mode (existing logic)
+                    img_prov = env.get("IMAGE_PROVIDER", "openai")
+                    expert_b64_draft = get_expert_face_b64() if face_swap_prov else None
+                    inline_face = (
+                        face_swap_prov in ("gemini",)
+                        and img_prov == "gemini"
+                        and expert_b64_draft
+                    )
+                    with st.spinner("Генерирую картинку..."):
+                        try:
+                            img_path = generate_image(
+                                image_prompt,
+                                provider=img_prov,
+                                expert_face_b64=expert_b64_draft if inline_face else None,
+                                reference_image_b64=st.session_state.get("reference_image_b64"),
+                            )
+                            # Face swap as separate step (replicate or openai)
+                            if not inline_face and face_swap_prov in ("replicate", "openai") and expert_b64_draft:
+                                try:
+                                    new_path = apply_face_swap(
+                                        img_path,
+                                        expert_face_b64=expert_b64_draft,
+                                        method=face_swap_prov,
+                                        image_prompt=image_prompt,
+                                    )
+                                    if new_path != img_path:
+                                        os.remove(img_path)
+                                        img_path = new_path
+                                except Exception as e:
+                                    st.warning(f"Face swap ошибка: {e}")
+                            img_b64 = image_to_base64(img_path)
+                            os.remove(img_path)
+                        except Exception as e:
+                            st.error(f"Ошибка генерации картинки: {e}")
 
                 if img_b64:
                     # Save to GitHub as pending draft
@@ -1451,7 +1624,7 @@ with tab_auto:
                         "image_prompt": image_prompt,
                         "image_base64": img_b64,
                         "text_provider": env.get("TEXT_PROVIDER", "openai"),
-                        "image_provider": env.get("IMAGE_PROVIDER", "openai"),
+                        "image_provider": "library" if image_source == "library" else env.get("IMAGE_PROVIDER", "openai"),
                         "face_swap_provider": face_swap_prov if face_swap_prov else "",
                         "published_at": None,
                         "message_id": None,
@@ -1476,3 +1649,117 @@ with tab_auto:
                             st.error(f"Ошибка сохранения на GitHub: {err}")
     else:
         st.warning("Нет неиспользованных идей. Добавьте новые во вкладке «Идеи».")
+
+# ── Tab: Image Library ──────────────────────────────────────────────────────
+
+with tab_library:
+    st.header("🖼️ Библиотека картинок")
+
+    from image_library import (
+        load_index as lib_load_index,
+        save_index as lib_save_index,
+        add_image as lib_add_image,
+        remove_image as lib_remove_image,
+        get_all_thumbnails as lib_get_all_thumbnails,
+        count as lib_img_count,
+        reset_pointer as lib_reset_pointer,
+    )
+
+    lib_index = lib_load_index()
+    lib_total = len(lib_index.get("images", []))
+    lib_next_pos = lib_index.get("next_index", 0)
+
+    # Status bar
+    if lib_total > 0:
+        if lib_next_pos >= lib_total:
+            lib_next_pos = 0
+        current_lib_img = lib_index["images"][lib_next_pos]
+        st.info(
+            f"📊 Всего картинок: **{lib_total}** | "
+            f"Следующая: **#{current_lib_img['index']}** ({current_lib_img['filename']}) | "
+            f"Позиция: {lib_next_pos + 1} из {lib_total}"
+        )
+    else:
+        st.warning("Библиотека пуста. Загрузите картинки ниже.")
+
+    # Upload section
+    st.subheader("📤 Загрузить картинки")
+    uploaded_lib_files = st.file_uploader(
+        "Выберите изображения",
+        type=["jpg", "jpeg", "png"],
+        accept_multiple_files=True,
+        key="library_upload",
+    )
+
+    if uploaded_lib_files and st.button("💾 Добавить в библиотеку", use_container_width=True):
+        progress = st.progress(0)
+        lib_errors = []
+        for i, uf in enumerate(uploaded_lib_files):
+            try:
+                img_bytes = uf.read()
+                new_idx = lib_add_image(img_bytes, uf.name)
+
+                # Sync to GitHub
+                if _get_github_token():
+                    img_file_path = os.path.join(BASE_DIR, "image_library", f"{new_idx}.json")
+                    with open(img_file_path, "r", encoding="utf-8") as f:
+                        img_json_content = f.read()
+                    ok, err = sync_library_image_to_github(new_idx, img_json_content)
+                    if not ok:
+                        lib_errors.append(f"{uf.name}: GitHub sync failed: {err}")
+            except Exception as e:
+                lib_errors.append(f"{uf.name}: {e}")
+            progress.progress((i + 1) / len(uploaded_lib_files))
+
+        # Sync updated index to GitHub
+        if _get_github_token():
+            sync_image_library_index_to_github(lib_load_index())
+
+        if lib_errors:
+            for le in lib_errors:
+                st.warning(le)
+        st.success(f"Добавлено {len(uploaded_lib_files) - len(lib_errors)} картинок!")
+        st.rerun()
+
+    # Gallery
+    if lib_total > 0:
+        st.divider()
+        st.subheader("📸 Галерея")
+
+        all_lib_images = lib_get_all_thumbnails()
+
+        cols_per_row = 4
+        for row_start in range(0, len(all_lib_images), cols_per_row):
+            cols = st.columns(cols_per_row)
+            for j, col in enumerate(cols):
+                img_idx = row_start + j
+                if img_idx >= len(all_lib_images):
+                    break
+                img_data = all_lib_images[img_idx]
+                with col:
+                    is_next = (img_idx == lib_next_pos)
+                    caption = f"#{img_data['index']} {img_data['filename']}"
+                    if is_next:
+                        caption = f"▶ {caption} (СЛЕДУЮЩАЯ)"
+
+                    st.image(
+                        base64.b64decode(img_data["base64"]),
+                        caption=caption,
+                        use_container_width=True,
+                    )
+                    if st.button("🗑️", key=f"lib_del_{img_data['index']}", help="Удалить"):
+                        lib_remove_image(img_data["index"])
+                        if _get_github_token():
+                            delete_library_image_from_github(img_data["index"])
+                            sync_image_library_index_to_github(lib_load_index())
+                        st.rerun()
+
+        # Controls
+        st.divider()
+        if st.button("🔄 Сбросить счётчик на начало", use_container_width=True,
+                     help="Начать выдачу с первой картинки"):
+            lib_reset_pointer()
+            if _get_github_token():
+                sync_image_library_index_to_github(lib_load_index())
+            st.success("Счётчик сброшен!")
+            st.rerun()
