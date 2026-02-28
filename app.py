@@ -414,7 +414,7 @@ with st.sidebar:
     )
 
     replicate_key = ""
-    if face_swap_prov == "replicate":
+    if face_swap_prov in ("replicate", "openai"):
         replicate_key = st.text_input(
             "Replicate API Key",
             value=env.get("REPLICATE_API_KEY", ""),
@@ -529,6 +529,31 @@ with tab_prompts:
         label_visibility="collapsed",
     )
 
+    st.subheader("📎 Референсное фото для картинки")
+    st.caption("Загрузите фото-референс. AI будет использовать его как ориентир для стиля, композиции и атмосферы при генерации картинок.")
+
+    ref_photo_prompts = st.file_uploader(
+        "Референсное фото",
+        type=["jpg", "jpeg", "png"],
+        key="prompts_ref_photo",
+    )
+    if ref_photo_prompts is not None:
+        ref_img = Image.open(ref_photo_prompts)
+        buf = io.BytesIO()
+        ref_img.save(buf, format="JPEG", quality=85)
+        st.session_state["reference_image_b64"] = base64.b64encode(buf.getvalue()).decode()
+        st.image(ref_img, caption="Загруженный референс", width=300)
+
+    if st.session_state.get("reference_image_b64"):
+        st.success("Референсное фото загружено ✅")
+        if st.button("🗑️ Удалить референсное фото", key="clear_ref_photo"):
+            st.session_state.pop("reference_image_b64", None)
+            st.rerun()
+    else:
+        st.caption("Референсное фото не загружено")
+
+    st.divider()
+
     col1, col2 = st.columns(2)
     with col1:
         if st.button("💾 Сохранить промпты", use_container_width=True):
@@ -635,6 +660,20 @@ with tab_create:
     else:
         idea = st.text_input("Введите идею для поста")
 
+    # Reference photo uploader
+    create_ref_photo_top = st.file_uploader(
+        "📎 Референсное фото (стиль/композиция)",
+        type=["jpg", "jpeg", "png"],
+        key="create_ref_photo_top",
+    )
+    if create_ref_photo_top is not None:
+        ref_img = Image.open(create_ref_photo_top)
+        buf = io.BytesIO()
+        ref_img.save(buf, format="JPEG", quality=85)
+        st.session_state["reference_image_b64"] = base64.b64encode(buf.getvalue()).decode()
+    if st.session_state.get("reference_image_b64"):
+        st.caption("Референсное фото загружено ✅")
+
     # Generate
     if st.button("🎨 Сгенерировать пост", disabled=not idea, use_container_width=True):
         prompts = load_prompts()
@@ -660,8 +699,8 @@ with tab_create:
             img_prov = env.get("IMAGE_PROVIDER", "gemini")
             expert_b64_for_swap = get_expert_face_b64() if face_swap_prov else None
             inline_face = (
-                face_swap_prov in ("gemini", "openai")
-                and img_prov in ("gemini", "openai")
+                face_swap_prov == "gemini"
+                and img_prov == "gemini"
                 and expert_b64_for_swap
             )
 
@@ -671,6 +710,7 @@ with tab_create:
                         st.session_state["image_prompt"],
                         provider=img_prov,
                         expert_face_b64=expert_b64_for_swap if inline_face else None,
+                        reference_image_b64=st.session_state.get("reference_image_b64"),
                     )
                     st.session_state["image_path"] = image_path
                     if inline_face:
@@ -679,7 +719,7 @@ with tab_create:
                     st.error(f"Ошибка генерации картинки: {e}")
 
             # Face swap as separate step (replicate or openai)
-            if not inline_face and face_swap_prov == "replicate" and "image_path" in st.session_state:
+            if not inline_face and face_swap_prov in ("replicate", "openai") and "image_path" in st.session_state:
                 if expert_b64_for_swap:
                     with st.spinner(f"Применяю face swap ({face_swap_prov})..."):
                         try:
@@ -753,6 +793,19 @@ with tab_create:
             )
             st.session_state["image_prompt"] = edited_img_prompt
 
+            ref_photo = st.file_uploader(
+                "📎 Референсное фото (стиль/композиция)",
+                type=["jpg", "jpeg", "png"],
+                key="create_ref_photo",
+            )
+            if ref_photo is not None:
+                ref_img = Image.open(ref_photo)
+                buf = io.BytesIO()
+                ref_img.save(buf, format="JPEG", quality=85)
+                st.session_state["reference_image_b64"] = base64.b64encode(buf.getvalue()).decode()
+            if st.session_state.get("reference_image_b64"):
+                st.caption("Референсное фото загружено ✅")
+
             if st.button("🔄 Перегенерировать картинку"):
                 env = load_env_values()
                 img_prov = env.get("IMAGE_PROVIDER", "gemini")
@@ -762,6 +815,7 @@ with tab_create:
                     and img_prov == "gemini"
                     and expert_b64_regen
                 )
+                ref_b64 = st.session_state.get("reference_image_b64")
                 with st.spinner("Генерирую новую картинку..."):
                     try:
                         old_path = st.session_state.get("image_path")
@@ -771,9 +825,10 @@ with tab_create:
                             st.session_state["image_prompt"],
                             provider=img_prov,
                             expert_face_b64=expert_b64_regen if inline_face else None,
+                            reference_image_b64=ref_b64,
                         )
                         # Face swap as separate step (replicate or openai)
-                        if not inline_face and face_swap_prov == "replicate" and expert_b64_regen:
+                        if not inline_face and face_swap_prov in ("replicate", "openai") and expert_b64_regen:
                             try:
                                 new_path = apply_face_swap(
                                     image_path,
@@ -1104,6 +1159,18 @@ with tab_auto:
                         key="draft_img_prompt_editor",
                     )
 
+                    draft_ref_photo = st.file_uploader(
+                        "📎 Референсное фото (стиль/композиция)",
+                        type=["jpg", "jpeg", "png"],
+                        key="draft_ref_photo",
+                    )
+                    draft_ref_b64 = None
+                    if draft_ref_photo is not None:
+                        ref_img = Image.open(draft_ref_photo)
+                        buf = io.BytesIO()
+                        ref_img.save(buf, format="JPEG", quality=85)
+                        draft_ref_b64 = base64.b64encode(buf.getvalue()).decode()
+
                     if st.button("🔄 Перегенерировать картинку", key="draft_regen_img"):
                         env = load_env_values()
                         img_prov = env.get("IMAGE_PROVIDER", "openai")
@@ -1121,10 +1188,11 @@ with tab_auto:
                                     draft_img_prompt,
                                     provider=img_prov,
                                     expert_face_b64=expert_b64_regen if inline_face else None,
+                                    reference_image_b64=draft_ref_b64,
                                 )
 
                                 # Face swap as separate step (replicate or openai)
-                                if not inline_face and face_swap_prov == "replicate" and expert_b64_regen:
+                                if not inline_face and face_swap_prov in ("replicate", "openai") and expert_b64_regen:
                                     try:
                                         swapped = apply_face_swap(
                                             new_image_path,
@@ -1299,6 +1367,19 @@ with tab_auto:
     if next_idea:
         st.info(f"Следующая идея: **{next_idea}**")
 
+        auto_ref_photo = st.file_uploader(
+            "📎 Референсное фото (стиль/композиция)",
+            type=["jpg", "jpeg", "png"],
+            key="auto_ref_photo",
+        )
+        if auto_ref_photo is not None:
+            ref_img = Image.open(auto_ref_photo)
+            buf = io.BytesIO()
+            ref_img.save(buf, format="JPEG", quality=85)
+            st.session_state["reference_image_b64"] = base64.b64encode(buf.getvalue()).decode()
+        if st.session_state.get("reference_image_b64"):
+            st.caption("Референсное фото загружено ✅")
+
         if st.button("🎨 Сгенерировать черновик", key="manual_gen", use_container_width=True):
             env = load_env_values()
             prompts = load_prompts()
@@ -1331,9 +1412,10 @@ with tab_auto:
                             image_prompt,
                             provider=img_prov,
                             expert_face_b64=expert_b64_draft if inline_face else None,
+                            reference_image_b64=st.session_state.get("reference_image_b64"),
                         )
                         # Face swap as separate step (replicate or openai)
-                        if not inline_face and face_swap_prov == "replicate" and expert_b64_draft:
+                        if not inline_face and face_swap_prov in ("replicate", "openai") and expert_b64_draft:
                             try:
                                 new_path = apply_face_swap(
                                     img_path,
