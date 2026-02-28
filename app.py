@@ -316,6 +316,52 @@ def delete_library_image_from_github(idx: int) -> tuple[bool, str]:
         return False, str(e)
 
 
+def _ensure_image_library_from_github() -> None:
+    """If local image_library.json is missing, restore library from GitHub.
+
+    On Streamlit Cloud local files are ephemeral — this downloads the index
+    and all individual image files back from GitHub so the library is available.
+    """
+    index_path = os.path.join(BASE_DIR, "image_library.json")
+    if os.path.exists(index_path):
+        return  # already present locally
+
+    content, _ = read_github_file(IMAGE_LIBRARY_INDEX_PATH)
+    if not content:
+        return  # nothing on GitHub either
+
+    try:
+        index_data = json.loads(content)
+    except Exception:
+        return
+
+    images = index_data.get("images", [])
+    if not images:
+        # Save empty index locally so we don't re-fetch every time
+        with open(index_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return
+
+    # Ensure library directory exists
+    lib_dir = os.path.join(BASE_DIR, "image_library")
+    os.makedirs(lib_dir, exist_ok=True)
+
+    # Download each image file
+    for img_entry in images:
+        idx = img_entry["index"]
+        img_path = os.path.join(lib_dir, f"{idx}.json")
+        if os.path.exists(img_path):
+            continue
+        img_content, _ = read_github_file(f"{IMAGE_LIBRARY_DIR_PATH}/{idx}.json")
+        if img_content:
+            with open(img_path, "w", encoding="utf-8") as f:
+                f.write(img_content)
+
+    # Save index locally
+    with open(index_path, "w", encoding="utf-8") as f:
+        f.write(content)
+
+
 # ── Local helpers ────────────────────────────────────────────────────────────
 
 
@@ -421,6 +467,9 @@ st.set_page_config(
 )
 
 st.title("📱 Автопостер для Telegram")
+
+# Restore image library from GitHub if missing locally (Streamlit Cloud is ephemeral)
+_ensure_image_library_from_github()
 
 # Show flash messages saved before st.rerun()
 if st.session_state.pop("_flash_success", None):
