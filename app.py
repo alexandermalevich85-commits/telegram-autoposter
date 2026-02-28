@@ -758,8 +758,8 @@ with tab_create:
                 img_prov = env.get("IMAGE_PROVIDER", "gemini")
                 expert_b64_regen = get_expert_face_b64() if face_swap_prov else None
                 inline_face = (
-                    face_swap_prov in ("gemini",)
-                    and img_prov == "gemini"
+                    face_swap_prov in ("gemini", "openai")
+                    and img_prov in ("gemini", "openai")
                     and expert_b64_regen
                 )
                 with st.spinner("Генерирую новую картинку..."):
@@ -1321,8 +1321,8 @@ with tab_auto:
                 img_prov = env.get("IMAGE_PROVIDER", "openai")
                 expert_b64_draft = get_expert_face_b64() if face_swap_prov else None
                 inline_face = (
-                    face_swap_prov in ("gemini",)
-                    and img_prov == "gemini"
+                    face_swap_prov in ("gemini", "openai")
+                    and img_prov in ("gemini", "openai")
                     and expert_b64_draft
                 )
                 with st.spinner("Генерирую картинку..."):

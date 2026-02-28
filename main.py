@@ -181,8 +181,8 @@ def cmd_generate() -> None:
     # Generate image (with expert face inline for gemini provider)
     face_swap_used = ""
     inline_face = (
-        FACE_SWAP_PROVIDER in ("gemini",)
-        and IMAGE_PROVIDER == "gemini"
+        FACE_SWAP_PROVIDER in ("gemini", "openai")
+        and IMAGE_PROVIDER in ("gemini", "openai")
         and expert_b64
     )
 
@@ -324,8 +324,8 @@ def cmd_full() -> None:
         expert_b64 = load_expert_face_b64()
 
     inline_face = (
-        FACE_SWAP_PROVIDER in ("gemini",)
-        and IMAGE_PROVIDER == "gemini"
+        FACE_SWAP_PROVIDER in ("gemini", "openai")
+        and IMAGE_PROVIDER in ("gemini", "openai")
         and expert_b64
     )
 

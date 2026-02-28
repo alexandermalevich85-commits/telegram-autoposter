@@ -63,17 +63,43 @@ def _generate_openai(
 
     key = api_key or OPENAI_API_KEY
     client = openai.OpenAI(api_key=key)
-    response = client.images.generate(
-        model="dall-e-3",
-        prompt=prompt,
-        size="1024x1024",
-        quality="standard",
-        n=1,
-    )
 
-    image_url = response.data[0].url
-    image_data = requests.get(image_url, timeout=30).content
-    image = Image.open(io.BytesIO(image_data))
+    if expert_face_b64:
+        # Generate image with expert face as reference via gpt-image-1
+        face_bytes = base64.b64decode(expert_face_b64)
+        face_file = io.BytesIO(face_bytes)
+        face_file.name = "expert_face.jpg"
+
+        full_prompt = (
+            prompt
+            + "\n\nCreate the image where the main character has the face "
+            "from the attached reference photo. Preserve exact facial likeness."
+        )
+
+        response = client.images.edit(
+            model="gpt-image-1",
+            image=face_file,
+            prompt=full_prompt,
+            size="1024x1024",
+            quality="medium",
+        )
+
+        img_b64 = response.data[0].b64_json
+        image = Image.open(io.BytesIO(base64.b64decode(img_b64)))
+    else:
+        # Standard generation via dall-e-3
+        response = client.images.generate(
+            model="dall-e-3",
+            prompt=prompt,
+            size="1024x1024",
+            quality="standard",
+            n=1,
+        )
+
+        image_url = response.data[0].url
+        image_data = requests.get(image_url, timeout=30).content
+        image = Image.open(io.BytesIO(image_data))
+
     return _save_to_temp(image)
 
 
