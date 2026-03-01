@@ -49,7 +49,7 @@ def _send_photo(token: str, chat_id: str, photo_path: str, caption: str | None) 
     """Send a photo, optionally with a caption."""
     api_url = f"https://api.telegram.org/bot{token}/sendPhoto"
 
-    data = {"chat_id": chat_id}
+    data = {"chat_id": chat_id, "show_caption_above_media": True}
     if caption:
         data["caption"] = caption
         data["parse_mode"] = "HTML"
@@ -78,6 +78,7 @@ def _send_message(token: str, chat_id: str, text: str) -> dict:
             "chat_id": chat_id,
             "text": text,
             "parse_mode": "HTML",
+            "disable_web_page_preview": True,
         },
         timeout=30,
     )
