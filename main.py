@@ -1,18 +1,14 @@
-import base64
-import io
 import json
 import logging
 import os
 import sys
-import tempfile
 from datetime import datetime
-
-from PIL import Image
 
 from config import TEXT_PROVIDER, IMAGE_PROVIDER, FACE_SWAP_PROVIDER, IMAGE_SOURCE, PUBLISH_TARGETS
 from generate_text import generate_post
 from generate_image import generate_image
 from face_swap import apply_face_swap
+from utils import image_to_base64, base64_to_tempfile, retry
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 IDEAS_FILE = os.path.join(BASE_DIR, "ideas.json")
@@ -87,50 +83,31 @@ def get_next_idea(ideas: list[dict]) -> tuple[int, str] | None:
     return None
 
 
-# ── Image encoding ───────────────────────────────────────────────────────────
 
-
-def image_to_base64(image_path: str) -> str:
-    """Read image, compress to JPEG quality 85, return base64 string."""
-    img = Image.open(image_path)
-    buf = io.BytesIO()
-    img.convert("RGB").save(buf, format="JPEG", quality=85)
-    return base64.b64encode(buf.getvalue()).decode("ascii")
-
-
-def base64_to_tempfile(b64_string: str) -> str:
-    """Decode base64 to a temporary JPEG file, return its path."""
-    data = base64.b64decode(b64_string)
-    fd, path = tempfile.mkstemp(suffix=".jpg", prefix="autoposter_")
-    os.close(fd)
-    with open(path, "wb") as f:
-        f.write(data)
-    return path
+# image_to_base64, base64_to_tempfile imported from utils.py
 
 
 def publish_to_all(image_path: str, caption: str) -> dict:
     """Publish to all configured platforms. Returns {platform: message_id} for successes."""
     targets = [t.strip() for t in PUBLISH_TARGETS.split(",") if t.strip()]
     platform_ids = {}
+
+    _senders = {
+        "telegram": lambda: __import__("post_telegram").send_post(image_path, caption),
+        "vk": lambda: __import__("post_vk").send_post(image_path, caption),
+        "max": lambda: __import__("post_max").send_post(image_path, caption),
+        "pinterest": lambda: __import__("post_pinterest").send_post(image_path, caption),
+    }
+
     for target in targets:
+        sender = _senders.get(target)
+        if not sender:
+            log.warning("Unknown platform: %s", target)
+            continue
         try:
-            if target == "telegram":
-                from post_telegram import send_post as tg_send
-                r = tg_send(image_path, caption)
-                platform_ids["telegram"] = r["result"]["message_id"]
-            elif target == "vk":
-                from post_vk import send_post as vk_send
-                r = vk_send(image_path, caption)
-                platform_ids["vk"] = r["result"]["message_id"]
-            elif target == "max":
-                from post_max import send_post as max_send
-                r = max_send(image_path, caption)
-                platform_ids["max"] = r["result"]["message_id"]
-            elif target == "pinterest":
-                from post_pinterest import send_post as pin_send
-                r = pin_send(image_path, caption)
-                platform_ids["pinterest"] = r["result"]["message_id"]
-            log.info("Published to %s: %s", target, platform_ids.get(target))
+            r = retry(sender, max_attempts=2, delay=3.0)
+            platform_ids[target] = r["result"]["message_id"]
+            log.info("Published to %s: %s", target, platform_ids[target])
         except Exception as e:
             log.error("Failed to publish to %s: %s", target, e)
     return platform_ids
@@ -160,36 +137,8 @@ def cmd_generate() -> None:
     idx, idea = result
     log.info("Idea #%d: %s", idx, idea)
 
-    # Load custom prompts (if synced from Streamlit)
-    custom_system_prompt = None
-    custom_image_tpl = None
-    prompts_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompts.json")
-    if os.path.exists(prompts_path):
-        try:
-            with open(prompts_path, "r", encoding="utf-8") as _pf:
-                _prompts_data = json.load(_pf)
-            custom_system_prompt = _prompts_data.get("system_prompt")
-            custom_image_tpl = _prompts_data.get("image_prompt_template")
-            log.info("Custom prompts loaded from prompts.json")
-        except Exception as exc:
-            log.warning("Failed to load prompts.json: %s", exc)
-
-    # Load context document (if synced from Streamlit)
-    context_document = None
-    context_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompt_context.json")
-    if os.path.exists(context_path):
-        try:
-            with open(context_path, "r", encoding="utf-8") as _cf:
-                _context_data = json.load(_cf)
-            context_document = _context_data.get("text")
-            if context_document:
-                log.info(
-                    "Context document loaded: %s (%d chars)",
-                    _context_data.get("filename", "?"),
-                    len(context_document),
-                )
-        except Exception as exc:
-            log.warning("Failed to load prompt_context.json: %s", exc)
+    # Load custom prompts and context document
+    custom_system_prompt, custom_image_tpl, context_document = _load_custom_prompts()
 
     # Generate text
     log.info("Generating post text via %s...", TEXT_PROVIDER)
@@ -354,6 +303,44 @@ def cmd_publish() -> None:
     log.info("Phase 2 done! Published to: %s", ", ".join(platform_ids.keys()))
 
 
+def _load_custom_prompts() -> tuple[str | None, str | None, str | None]:
+    """Load custom prompts and context document from JSON files.
+
+    Returns (system_prompt, image_prompt_template, context_document).
+    """
+    custom_system_prompt = None
+    custom_image_tpl = None
+    context_document = None
+
+    prompts_path = os.path.join(BASE_DIR, "prompts.json")
+    if os.path.exists(prompts_path):
+        try:
+            with open(prompts_path, "r", encoding="utf-8") as _pf:
+                _prompts_data = json.load(_pf)
+            custom_system_prompt = _prompts_data.get("system_prompt")
+            custom_image_tpl = _prompts_data.get("image_prompt_template")
+            log.info("Custom prompts loaded from prompts.json")
+        except Exception as exc:
+            log.warning("Failed to load prompts.json: %s", exc)
+
+    context_path = os.path.join(BASE_DIR, "prompt_context.json")
+    if os.path.exists(context_path):
+        try:
+            with open(context_path, "r", encoding="utf-8") as _cf:
+                _context_data = json.load(_cf)
+            context_document = _context_data.get("text")
+            if context_document:
+                log.info(
+                    "Context document loaded: %s (%d chars)",
+                    _context_data.get("filename", "?"),
+                    len(context_document),
+                )
+        except Exception as exc:
+            log.warning("Failed to load prompt_context.json: %s", exc)
+
+    return custom_system_prompt, custom_image_tpl, context_document
+
+
 def cmd_full() -> None:
     """Legacy: full pipeline (generate + publish in one shot)."""
     log.info("Starting full autoposter pipeline")
@@ -367,8 +354,16 @@ def cmd_full() -> None:
     idx, idea = result
     log.info("Idea #%d: %s", idx, idea)
 
+    # Load custom prompts (same as cmd_generate)
+    custom_system_prompt, custom_image_tpl, context_document = _load_custom_prompts()
+
     log.info("Generating post text via %s...", TEXT_PROVIDER)
-    post_text, image_prompt = generate_post(idea)
+    post_text, image_prompt = generate_post(
+        idea,
+        system_prompt=custom_system_prompt,
+        image_prompt_template=custom_image_tpl,
+        context_document=context_document,
+    )
     log.info("Post text generated (%d chars)", len(post_text))
     log.info("Image prompt: %s", image_prompt[:100])
 
@@ -430,8 +425,15 @@ def cmd_full() -> None:
             except Exception as e:
                 log.warning("Face swap failed, using original image: %s", e)
 
-    log.info("Publishing to platforms: %s", PUBLISH_TARGETS)
-    platform_ids = publish_to_all(image_path, post_text)
+    try:
+        log.info("Publishing to platforms: %s", PUBLISH_TARGETS)
+        platform_ids = publish_to_all(image_path, post_text)
+    finally:
+        if image_path:
+            try:
+                os.remove(image_path)
+            except OSError:
+                pass
 
     if not platform_ids:
         log.error("Failed to publish to any platform!")
@@ -445,12 +447,6 @@ def cmd_full() -> None:
 
     add_history_entry(idea, post_text, message_id, platform_ids)
     log.info("History entry saved")
-
-    if image_path:
-        try:
-            os.remove(image_path)
-        except OSError:
-            pass
 
     log.info("Done! Published to: %s", ", ".join(platform_ids.keys()))
 

@@ -70,7 +70,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.check.outputs.enabled != 'false'
-        run: pip install anthropic google-genai openai replicate requests python-dotenv Pillow pypdf python-docx
+        run: pip install -r requirements.txt
 
       - name: Read provider config
         if: steps.check.outputs.enabled != 'false'
@@ -112,6 +112,7 @@ jobs:
           git add pending_post.json
           if [ -f image_library.json ]; then git add image_library.json; fi
           git diff --staged --quiet || git commit -m "Phase 1: draft generated for review [bot]"
+          git pull origin main --rebase
           git push
 
 # ── Phase 2: Auto-publish if not published manually ─────────────────────────
@@ -148,7 +149,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.check.outputs.enabled != 'false'
-        run: pip install anthropic google-genai openai replicate requests python-dotenv Pillow pypdf python-docx
+        run: pip install -r requirements.txt
 
       - name: Read provider config
         if: steps.check.outputs.enabled != 'false'
@@ -200,7 +201,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install anthropic google-genai openai replicate requests python-dotenv Pillow pypdf python-docx
+        run: pip install -r requirements.txt
 
       - name: Read provider config
         id: providers

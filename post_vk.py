@@ -15,38 +15,32 @@ User token flow:
 4. wall.post with attachment → post_id
 """
 
-import re
-
 import requests
 
 from config import VK_ACCESS_TOKEN, VK_GROUP_ID
+from utils import strip_html
 
 _API_VERSION = "5.199"
 _API_BASE = "https://api.vk.com/method"
 
 
-def _strip_html(text: str) -> str:
-    """Convert HTML-formatted text to plain text for VK."""
-    # Replace <br> with newlines
-    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
-    # Remove all HTML tags
-    text = re.sub(r"<[^>]+>", "", text)
-    # Decode common HTML entities
-    text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
-    text = text.replace("&quot;", '"').replace("&#39;", "'")
-    return text.strip()
+def _vk_post(method: str, params: dict, timeout: int = 15) -> dict:
+    """Make a VK API call using POST (keeps token out of URL/logs)."""
+    resp = requests.post(
+        f"{_API_BASE}/{method}",
+        data={**params, "v": _API_VERSION},
+        timeout=timeout,
+    ).json()
+    if "error" in resp:
+        raise RuntimeError(f"VK {method}: {resp['error']}")
+    return resp
 
 
 def _upload_photo_wall(token: str, gid: str, photo_path: str) -> str:
     """Upload photo via Wall Upload Server (user token)."""
-    resp = requests.get(
-        f"{_API_BASE}/photos.getWallUploadServer",
-        params={"group_id": gid, "access_token": token, "v": _API_VERSION},
-        timeout=15,
-    ).json()
-
-    if "error" in resp:
-        raise RuntimeError(f"VK getWallUploadServer: {resp['error']}")
+    resp = _vk_post("photos.getWallUploadServer", {
+        "group_id": gid, "access_token": token,
+    })
 
     with open(photo_path, "rb") as f:
         upload_resp = requests.post(
@@ -56,21 +50,13 @@ def _upload_photo_wall(token: str, gid: str, photo_path: str) -> str:
     if not upload_resp.get("photo") or upload_resp["photo"] == "[]":
         raise RuntimeError(f"VK photo upload failed: {upload_resp}")
 
-    save_resp = requests.get(
-        f"{_API_BASE}/photos.saveWallPhoto",
-        params={
-            "group_id": gid,
-            "photo": upload_resp["photo"],
-            "server": upload_resp["server"],
-            "hash": upload_resp["hash"],
-            "access_token": token,
-            "v": _API_VERSION,
-        },
-        timeout=15,
-    ).json()
-
-    if "error" in save_resp:
-        raise RuntimeError(f"VK saveWallPhoto: {save_resp['error']}")
+    save_resp = _vk_post("photos.saveWallPhoto", {
+        "group_id": gid,
+        "photo": upload_resp["photo"],
+        "server": upload_resp["server"],
+        "hash": upload_resp["hash"],
+        "access_token": token,
+    })
 
     info = save_resp["response"][0]
     return f"photo{info['owner_id']}_{info['id']}"
@@ -78,14 +64,9 @@ def _upload_photo_wall(token: str, gid: str, photo_path: str) -> str:
 
 def _upload_photo_messages(token: str, gid: str, photo_path: str) -> str:
     """Upload photo via Messages Upload Server (community token)."""
-    resp = requests.get(
-        f"{_API_BASE}/photos.getMessagesUploadServer",
-        params={"group_id": gid, "access_token": token, "v": _API_VERSION},
-        timeout=15,
-    ).json()
-
-    if "error" in resp:
-        raise RuntimeError(f"VK getMessagesUploadServer: {resp['error']}")
+    resp = _vk_post("photos.getMessagesUploadServer", {
+        "group_id": gid, "access_token": token,
+    })
 
     with open(photo_path, "rb") as f:
         upload_resp = requests.post(
@@ -95,20 +76,12 @@ def _upload_photo_messages(token: str, gid: str, photo_path: str) -> str:
     if not upload_resp.get("photo") or upload_resp["photo"] == "[]":
         raise RuntimeError(f"VK photo upload failed: {upload_resp}")
 
-    save_resp = requests.get(
-        f"{_API_BASE}/photos.saveMessagesPhoto",
-        params={
-            "photo": upload_resp["photo"],
-            "server": upload_resp["server"],
-            "hash": upload_resp["hash"],
-            "access_token": token,
-            "v": _API_VERSION,
-        },
-        timeout=15,
-    ).json()
-
-    if "error" in save_resp:
-        raise RuntimeError(f"VK saveMessagesPhoto: {save_resp['error']}")
+    save_resp = _vk_post("photos.saveMessagesPhoto", {
+        "photo": upload_resp["photo"],
+        "server": upload_resp["server"],
+        "hash": upload_resp["hash"],
+        "access_token": token,
+    })
 
     info = save_resp["response"][0]
     return f"photo{info['owner_id']}_{info['id']}"
@@ -142,7 +115,7 @@ def send_post(
     # Strip minus sign if provided
     gid = gid.lstrip("-")
 
-    plain_text = _strip_html(caption)
+    plain_text = strip_html(caption)
 
     # Try wall upload first (user token), fall back to messages upload (group token)
     try:
@@ -153,22 +126,14 @@ def send_post(
         else:
             raise
 
-    # Create wall post
-    post_resp = requests.get(
-        f"{_API_BASE}/wall.post",
-        params={
-            "owner_id": f"-{gid}",
-            "from_group": 1,
-            "message": plain_text,
-            "attachments": attachment,
-            "access_token": token,
-            "v": _API_VERSION,
-        },
-        timeout=15,
-    ).json()
-
-    if "error" in post_resp:
-        raise RuntimeError(f"VK wall.post error: {post_resp['error']}")
+    # Create wall post (using POST to keep token out of URL)
+    post_resp = _vk_post("wall.post", {
+        "owner_id": f"-{gid}",
+        "from_group": 1,
+        "message": plain_text,
+        "attachments": attachment,
+        "access_token": token,
+    })
 
     post_id = post_resp["response"]["post_id"]
 

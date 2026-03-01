@@ -5,22 +5,12 @@ Max Bot API flow:
 2. POST /messages?chat_id=... with image attachment → message
 """
 
-import re
-
 import requests
 
 from config import MAX_BOT_TOKEN, MAX_CHAT_ID
+from utils import strip_html
 
 _API_BASE = "https://platform-api.max.ru"
-
-
-def _strip_html(text: str) -> str:
-    """Convert HTML-formatted text to plain text for Max."""
-    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
-    text = re.sub(r"<[^>]+>", "", text)
-    text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
-    text = text.replace("&quot;", '"').replace("&#39;", "'")
-    return text.strip()
 
 
 def send_post(
@@ -48,8 +38,9 @@ def send_post(
     if not cid:
         raise RuntimeError("MAX_CHAT_ID не задан")
 
-    headers = {"Authorization": token}
-    plain_text = _strip_html(caption)
+    # Max Bot API expects "Bearer <token>" in Authorization header
+    headers = {"Authorization": f"Bearer {token}"}
+    plain_text = strip_html(caption)
 
     # Step 1: Upload image
     with open(photo_path, "rb") as photo_file:

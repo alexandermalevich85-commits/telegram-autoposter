@@ -6,22 +6,13 @@ Pinterest API v5 flow:
 """
 
 import base64
-import re
 
 import requests
 
 from config import PINTEREST_ACCESS_TOKEN, PINTEREST_BOARD_ID
+from utils import strip_html, detect_content_type
 
 _API_BASE = "https://api.pinterest.com/v5"
-
-
-def _strip_html(text: str) -> str:
-    """Convert HTML-formatted text to plain text for Pinterest."""
-    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
-    text = re.sub(r"<[^>]+>", "", text)
-    text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
-    text = text.replace("&quot;", '"').replace("&#39;", "'")
-    return text.strip()
 
 
 def send_post(
@@ -50,7 +41,7 @@ def send_post(
     if not bid:
         raise RuntimeError("PINTEREST_BOARD_ID не задан")
 
-    plain_text = _strip_html(caption)
+    plain_text = strip_html(caption)
 
     # Split into title + description
     lines = plain_text.split("\n", 1)
@@ -60,6 +51,9 @@ def send_post(
     # Read and encode image
     with open(photo_path, "rb") as f:
         image_b64 = base64.b64encode(f.read()).decode("ascii")
+
+    # Detect content type from file extension
+    content_type = detect_content_type(photo_path)
 
     # Create pin
     headers = {
@@ -73,7 +67,7 @@ def send_post(
         "description": description,
         "media_source": {
             "source_type": "image_base64",
-            "content_type": "image/jpeg",
+            "content_type": content_type,
             "data": image_b64,
         },
     }
