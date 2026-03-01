@@ -4,7 +4,10 @@ import os
 import sys
 from datetime import datetime
 
-from config import TEXT_PROVIDER, IMAGE_PROVIDER, FACE_SWAP_PROVIDER, IMAGE_SOURCE, PUBLISH_TARGETS
+from config import (
+    TEXT_PROVIDER, IMAGE_PROVIDER, FACE_SWAP_PROVIDER, IMAGE_SOURCE, PUBLISH_TARGETS,
+    TELEGRAM_FOOTER, VK_FOOTER, MAX_FOOTER, PINTEREST_LINK,
+)
 from generate_text import generate_post
 from generate_image import generate_image
 from face_swap import apply_face_swap
@@ -93,10 +96,14 @@ def publish_to_all(image_path: str, caption: str) -> dict:
     platform_ids = {}
 
     _senders = {
-        "telegram": lambda: __import__("post_telegram").send_post(image_path, caption),
-        "vk": lambda: __import__("post_vk").send_post(image_path, caption),
-        "max": lambda: __import__("post_max").send_post(image_path, caption),
-        "pinterest": lambda: __import__("post_pinterest").send_post(image_path, caption),
+        "telegram": lambda: __import__("post_telegram").send_post(
+            image_path, caption, footer_text=TELEGRAM_FOOTER),
+        "vk": lambda: __import__("post_vk").send_post(
+            image_path, caption, footer_text=VK_FOOTER),
+        "max": lambda: __import__("post_max").send_post(
+            image_path, caption, footer_text=MAX_FOOTER),
+        "pinterest": lambda: __import__("post_pinterest").send_post(
+            image_path, caption, link=PINTEREST_LINK),
     }
 
     for target in targets:

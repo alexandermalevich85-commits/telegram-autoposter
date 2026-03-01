@@ -467,25 +467,29 @@ def _publish_to_platforms(
                 from post_telegram import send_post as tg_send
                 r = tg_send(photo_path, caption,
                             bot_token=env.get("TELEGRAM_BOT_TOKEN"),
-                            channel_id=env.get("TELEGRAM_CHANNEL_ID"))
+                            channel_id=env.get("TELEGRAM_CHANNEL_ID"),
+                            footer_text=env.get("TELEGRAM_FOOTER") or "")
                 results["telegram"] = {"ok": True, "message_id": r["result"]["message_id"]}
             elif target == "vk":
                 from post_vk import send_post as vk_send
                 r = vk_send(photo_path, caption,
                             access_token=env.get("VK_ACCESS_TOKEN"),
-                            group_id=env.get("VK_GROUP_ID"))
+                            group_id=env.get("VK_GROUP_ID"),
+                            footer_text=env.get("VK_FOOTER") or "")
                 results["vk"] = {"ok": True, "message_id": r["result"]["message_id"]}
             elif target == "max":
                 from post_max import send_post as max_send
                 r = max_send(photo_path, caption,
                              bot_token=env.get("MAX_BOT_TOKEN"),
-                             chat_id=env.get("MAX_CHAT_ID"))
+                             chat_id=env.get("MAX_CHAT_ID"),
+                             footer_text=env.get("MAX_FOOTER") or "")
                 results["max"] = {"ok": True, "message_id": r["result"]["message_id"]}
             elif target == "pinterest":
                 from post_pinterest import send_post as pin_send
                 r = pin_send(photo_path, caption,
                              access_token=env.get("PINTEREST_ACCESS_TOKEN"),
-                             board_id=env.get("PINTEREST_BOARD_ID"))
+                             board_id=env.get("PINTEREST_BOARD_ID"),
+                             link=env.get("PINTEREST_LINK") or "")
                 results["pinterest"] = {"ok": True, "message_id": r["result"]["message_id"]}
         except Exception as e:
             results[target] = {"ok": False, "error": str(e)}
