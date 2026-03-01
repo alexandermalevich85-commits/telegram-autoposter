@@ -157,8 +157,16 @@ jobs:
         run: |
           if [ -f provider.cfg ]; then
             echo "publish_targets=$(grep PUBLISH_TARGETS provider.cfg | cut -d= -f2)" >> $GITHUB_OUTPUT
+            echo "telegram_footer=$(grep TELEGRAM_FOOTER provider.cfg | cut -d= -f2-)" >> $GITHUB_OUTPUT
+            echo "vk_footer=$(grep VK_FOOTER provider.cfg | cut -d= -f2-)" >> $GITHUB_OUTPUT
+            echo "max_footer=$(grep MAX_FOOTER provider.cfg | cut -d= -f2-)" >> $GITHUB_OUTPUT
+            echo "pinterest_link=$(grep PINTEREST_LINK provider.cfg | cut -d= -f2-)" >> $GITHUB_OUTPUT
           else
             echo "publish_targets=telegram" >> $GITHUB_OUTPUT
+            echo "telegram_footer=" >> $GITHUB_OUTPUT
+            echo "vk_footer=" >> $GITHUB_OUTPUT
+            echo "max_footer=" >> $GITHUB_OUTPUT
+            echo "pinterest_link=" >> $GITHUB_OUTPUT
           fi
 
       - name: Publish pending draft
@@ -167,12 +175,16 @@ jobs:
           PUBLISH_TARGETS: ${{ steps.providers.outputs.publish_targets || 'telegram' }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          TELEGRAM_FOOTER: ${{ steps.providers.outputs.telegram_footer }}
           VK_ACCESS_TOKEN: ${{ secrets.VK_ACCESS_TOKEN }}
           VK_GROUP_ID: ${{ secrets.VK_GROUP_ID }}
+          VK_FOOTER: ${{ steps.providers.outputs.vk_footer }}
           MAX_BOT_TOKEN: ${{ secrets.MAX_BOT_TOKEN }}
           MAX_CHAT_ID: ${{ secrets.MAX_CHAT_ID }}
+          MAX_FOOTER: ${{ steps.providers.outputs.max_footer }}
           PINTEREST_ACCESS_TOKEN: ${{ secrets.PINTEREST_ACCESS_TOKEN }}
           PINTEREST_BOARD_ID: ${{ secrets.PINTEREST_BOARD_ID }}
+          PINTEREST_LINK: ${{ steps.providers.outputs.pinterest_link }}
         run: python main.py publish
 
       - name: Commit updated files
@@ -212,12 +224,20 @@ jobs:
             echo "face_swap=$(grep FACE_SWAP_PROVIDER provider.cfg | cut -d= -f2)" >> $GITHUB_OUTPUT
             echo "image_source=$(grep IMAGE_SOURCE provider.cfg | cut -d= -f2)" >> $GITHUB_OUTPUT
             echo "publish_targets=$(grep PUBLISH_TARGETS provider.cfg | cut -d= -f2)" >> $GITHUB_OUTPUT
+            echo "telegram_footer=$(grep TELEGRAM_FOOTER provider.cfg | cut -d= -f2-)" >> $GITHUB_OUTPUT
+            echo "vk_footer=$(grep VK_FOOTER provider.cfg | cut -d= -f2-)" >> $GITHUB_OUTPUT
+            echo "max_footer=$(grep MAX_FOOTER provider.cfg | cut -d= -f2-)" >> $GITHUB_OUTPUT
+            echo "pinterest_link=$(grep PINTEREST_LINK provider.cfg | cut -d= -f2-)" >> $GITHUB_OUTPUT
           else
             echo "text=openai" >> $GITHUB_OUTPUT
             echo "image=openai" >> $GITHUB_OUTPUT
             echo "face_swap=" >> $GITHUB_OUTPUT
             echo "image_source=generate" >> $GITHUB_OUTPUT
             echo "publish_targets=telegram" >> $GITHUB_OUTPUT
+            echo "telegram_footer=" >> $GITHUB_OUTPUT
+            echo "vk_footer=" >> $GITHUB_OUTPUT
+            echo "max_footer=" >> $GITHUB_OUTPUT
+            echo "pinterest_link=" >> $GITHUB_OUTPUT
           fi
 
       - name: Run full autoposter
@@ -236,12 +256,16 @@ jobs:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          TELEGRAM_FOOTER: ${{ steps.providers.outputs.telegram_footer }}
           VK_ACCESS_TOKEN: ${{ secrets.VK_ACCESS_TOKEN }}
           VK_GROUP_ID: ${{ secrets.VK_GROUP_ID }}
+          VK_FOOTER: ${{ steps.providers.outputs.vk_footer }}
           MAX_BOT_TOKEN: ${{ secrets.MAX_BOT_TOKEN }}
           MAX_CHAT_ID: ${{ secrets.MAX_CHAT_ID }}
+          MAX_FOOTER: ${{ steps.providers.outputs.max_footer }}
           PINTEREST_ACCESS_TOKEN: ${{ secrets.PINTEREST_ACCESS_TOKEN }}
           PINTEREST_BOARD_ID: ${{ secrets.PINTEREST_BOARD_ID }}
+          PINTEREST_LINK: ${{ steps.providers.outputs.pinterest_link }}
         run: python main.py full
 
       - name: Commit updated files

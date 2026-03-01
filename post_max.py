@@ -7,7 +7,7 @@ Max Bot API flow:
 
 import requests
 
-from config import MAX_BOT_TOKEN, MAX_CHAT_ID
+from config import MAX_BOT_TOKEN, MAX_CHAT_ID, MAX_FOOTER
 from utils import strip_html
 
 _API_BASE = "https://platform-api.max.ru"
@@ -18,6 +18,7 @@ def send_post(
     caption: str,
     bot_token: str | None = None,
     chat_id: str | None = None,
+    footer_text: str | None = None,
 ) -> dict:
     """Send a photo with text to a Max channel.
 
@@ -41,6 +42,11 @@ def send_post(
     # Max Bot API expects "Bearer <token>" in Authorization header
     headers = {"Authorization": f"Bearer {token}"}
     plain_text = strip_html(caption)
+
+    # Append platform-specific footer
+    footer = footer_text if footer_text is not None else MAX_FOOTER
+    if footer:
+        plain_text = plain_text + "\n\n" + footer
 
     # Step 1: Upload image
     with open(photo_path, "rb") as photo_file:

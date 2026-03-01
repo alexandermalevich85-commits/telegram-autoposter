@@ -9,7 +9,7 @@ import base64
 
 import requests
 
-from config import PINTEREST_ACCESS_TOKEN, PINTEREST_BOARD_ID
+from config import PINTEREST_ACCESS_TOKEN, PINTEREST_BOARD_ID, PINTEREST_LINK
 from utils import strip_html, detect_content_type
 
 _API_BASE = "https://api.pinterest.com/v5"
@@ -20,6 +20,7 @@ def send_post(
     caption: str,
     access_token: str | None = None,
     board_id: str | None = None,
+    link: str | None = None,
 ) -> dict:
     """Create a pin on a Pinterest board.
 
@@ -71,6 +72,11 @@ def send_post(
             "data": image_b64,
         },
     }
+
+    # Add destination link (clickable "Visit site" button on the pin)
+    pin_link = link if link is not None else PINTEREST_LINK
+    if pin_link:
+        payload["link"] = pin_link
 
     resp = requests.post(
         f"{_API_BASE}/pins",

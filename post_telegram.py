@@ -1,6 +1,6 @@
 import requests
 
-from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID
+from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID, TELEGRAM_FOOTER
 
 # Telegram limits: photo caption ≤ 1024 chars, message text ≤ 4096 chars
 _CAPTION_LIMIT = 1024
@@ -11,6 +11,7 @@ def send_post(
     caption: str,
     bot_token: str | None = None,
     channel_id: str | None = None,
+    footer_text: str | None = None,
 ) -> dict:
     """Send a photo with caption to the Telegram channel.
 
@@ -29,6 +30,11 @@ def send_post(
     """
     token = bot_token or TELEGRAM_BOT_TOKEN
     chat_id = channel_id or TELEGRAM_CHANNEL_ID
+
+    # Append platform-specific footer (e.g., bot link)
+    footer = footer_text if footer_text is not None else TELEGRAM_FOOTER
+    if footer:
+        caption = caption + "\n\n" + footer
 
     if len(caption) <= _CAPTION_LIMIT:
         # Caption fits — send photo + text together

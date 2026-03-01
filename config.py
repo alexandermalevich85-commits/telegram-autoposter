@@ -57,6 +57,12 @@ PINTEREST_BOARD_ID = _get("PINTEREST_BOARD_ID")
 # Publish targets (comma-separated: telegram,vk,max,pinterest)
 PUBLISH_TARGETS = _get("PUBLISH_TARGETS", "telegram").lower()
 
+# Platform-specific footers (appended to post text at publish time)
+TELEGRAM_FOOTER = _get("TELEGRAM_FOOTER")    # e.g. "👉 @my_bot"
+VK_FOOTER = _get("VK_FOOTER")                # e.g. "👉 vk.com/my_group"
+MAX_FOOTER = _get("MAX_FOOTER")              # e.g. "👉 Подробнее: ..."
+PINTEREST_LINK = _get("PINTEREST_LINK")      # Destination URL for pin "Visit site" button
+
 # GitHub (for syncing provider.cfg from Streamlit UI)
 GITHUB_TOKEN = _get("GITHUB_TOKEN")
 

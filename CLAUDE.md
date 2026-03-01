@@ -231,12 +231,29 @@ plain_text = strip_html(caption)  # <br> → \n, удаляет теги, дек
 ```
 Поле `message_id` сохранено для обратной совместимости (= Telegram ID или первый доступный).
 
+### Платформенные футеры (фича, март 2026)
+
+Черновик (draft) хранится **без** ссылок/футеров — текст универсальный. При публикации каждая платформа добавляет свой футер к тексту.
+
+| Переменная | Платформа | Что делает |
+|-----------|-----------|-----------|
+| `TELEGRAM_FOOTER` | Telegram | Текст в конце поста (поддерживает HTML) |
+| `VK_FOOTER` | ВКонтакте | Текст в конце поста (plain text, URL автолинкуется) |
+| `MAX_FOOTER` | Max | Текст в конце поста (plain text) |
+| `PINTEREST_LINK` | Pinterest | URL для кнопки «Visit site» (поле `link` API) |
+
+**Важно про Pinterest:** Ссылки в поле `description` пина **не кликабельны**. Pinterest API v5 имеет отдельное поле `link`, которое отображается как кнопка "Visit site". Поэтому для Pinterest используется `PINTEREST_LINK` (URL), а не текстовый футер.
+
+**Реализация:** Каждый модуль `post_*.py` читает свой футер из `config.py` и добавляет `\n\n` + футер к тексту при публикации. Футеры настраиваются в sidebar UI и сохраняются в `provider.cfg` + `.env`.
+
+**Параметр `footer_text`:** Все `send_post()` принимают опциональный `footer_text` (или `link` для Pinterest) для переопределения config-значения. Если `None` — берётся из config, если пустая строка — футер не добавляется.
+
 ### UI: выбор платформ
 В sidebar — мультиселект для выбора платформ публикации:
-- При выборе VK → появляются поля VK_ACCESS_TOKEN + VK_GROUP_ID
-- При выборе Max → MAX_BOT_TOKEN + MAX_CHAT_ID
-- При выборе Pinterest → PINTEREST_ACCESS_TOKEN + PINTEREST_BOARD_ID
-- Telegram — всегда доступен (токен + channel ID в отдельной секции)
+- При выборе VK → появляются поля VK_ACCESS_TOKEN + VK_GROUP_ID + VK_FOOTER
+- При выборе Max → MAX_BOT_TOKEN + MAX_CHAT_ID + MAX_FOOTER
+- При выборе Pinterest → PINTEREST_ACCESS_TOKEN + PINTEREST_BOARD_ID + PINTEREST_LINK
+- Telegram — всегда доступен (токен + channel ID + TELEGRAM_FOOTER)
 
 Настройки сохраняются в `provider.cfg` (локально + GitHub) при нажатии "Сохранить".
 
@@ -402,6 +419,10 @@ AUTOPUBLISH_ENABLED=true
 FACE_SWAP_PROVIDER=
 IMAGE_SOURCE=library
 PUBLISH_TARGETS=telegram,vk
+TELEGRAM_FOOTER=
+VK_FOOTER=
+MAX_FOOTER=
+PINTEREST_LINK=
 ```
 
 При этой конфигурации:
@@ -409,6 +430,7 @@ PUBLISH_TARGETS=telegram,vk
 - Картинка берётся из **библиотеки** (переключается на AI-генерацию в UI)
 - Face swap **отключён**
 - Публикация в **Telegram** и **ВКонтакте** (можно добавить max, pinterest через UI)
+- Футеры не заданы (посты публикуются без дополнительных ссылок)
 
 ---
 

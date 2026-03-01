@@ -22,6 +22,8 @@ _SECRET_KEYS = [
     "MAX_BOT_TOKEN", "MAX_CHAT_ID",
     # Pinterest
     "PINTEREST_ACCESS_TOKEN", "PINTEREST_BOARD_ID",
+    # Platform footers
+    "TELEGRAM_FOOTER", "VK_FOOTER", "MAX_FOOTER", "PINTEREST_LINK",
     # Vertex AI (alternative to GEMINI_API_KEY)
     "GOOGLE_PROJECT_ID", "GOOGLE_LOCATION", "GOOGLE_SERVICE_ACCOUNT_JSON",
 ]
@@ -145,6 +147,10 @@ def update_github_provider_cfg(
     face_swap_provider: str | None = None,
     image_source: str | None = None,
     publish_targets: str | None = None,
+    telegram_footer: str | None = None,
+    vk_footer: str | None = None,
+    max_footer: str | None = None,
+    pinterest_link: str | None = None,
 ) -> tuple[bool, str]:
     """Update provider.cfg in GitHub repo.
 
@@ -171,6 +177,15 @@ def update_github_provider_cfg(
     if publish_targets is None:
         publish_targets = current.get("PUBLISH_TARGETS", "telegram")
 
+    if telegram_footer is None:
+        telegram_footer = current.get("TELEGRAM_FOOTER", "")
+    if vk_footer is None:
+        vk_footer = current.get("VK_FOOTER", "")
+    if max_footer is None:
+        max_footer = current.get("MAX_FOOTER", "")
+    if pinterest_link is None:
+        pinterest_link = current.get("PINTEREST_LINK", "")
+
     enabled_str = "true" if autopublish_enabled else "false"
     new_content = (
         f"TEXT_PROVIDER={text_provider}\n"
@@ -179,6 +194,10 @@ def update_github_provider_cfg(
         f"FACE_SWAP_PROVIDER={face_swap_provider}\n"
         f"IMAGE_SOURCE={image_source}\n"
         f"PUBLISH_TARGETS={publish_targets}\n"
+        f"TELEGRAM_FOOTER={telegram_footer}\n"
+        f"VK_FOOTER={vk_footer}\n"
+        f"MAX_FOOTER={max_footer}\n"
+        f"PINTEREST_LINK={pinterest_link}\n"
     )
 
     return write_github_file(
@@ -606,33 +625,60 @@ with st.sidebar:
     st.subheader("📨 Telegram")
     tg_token = st.text_input("Bot Token", value=env.get("TELEGRAM_BOT_TOKEN", ""), type="password")
     tg_channel = st.text_input("Channel ID", value=env.get("TELEGRAM_CHANNEL_ID", ""))
+    tg_footer = st.text_input(
+        "Футер (ссылка/текст в конце поста)",
+        value=env.get("TELEGRAM_FOOTER", ""),
+        placeholder="👉 @my_bot",
+        help="Добавляется в конец каждого поста в Telegram. Поддерживает HTML.",
+    )
 
     if "vk" in publish_targets:
         st.divider()
         st.subheader("📘 ВКонтакте")
         vk_token = st.text_input("VK Access Token", value=env.get("VK_ACCESS_TOKEN", ""), type="password")
         vk_group = st.text_input("VK Group ID (без минуса)", value=env.get("VK_GROUP_ID", ""))
+        vk_footer = st.text_input(
+            "Футер (ссылка/текст в конце поста)",
+            value=env.get("VK_FOOTER", ""),
+            placeholder="👉 vk.com/my_group",
+            help="Добавляется в конец каждого поста ВКонтакте. Только plain text.",
+        )
     else:
         vk_token = env.get("VK_ACCESS_TOKEN", "")
         vk_group = env.get("VK_GROUP_ID", "")
+        vk_footer = env.get("VK_FOOTER", "")
 
     if "max" in publish_targets:
         st.divider()
         st.subheader("💬 Max")
         max_token = st.text_input("Max Bot Token", value=env.get("MAX_BOT_TOKEN", ""), type="password")
         max_chat = st.text_input("Max Chat ID канала", value=env.get("MAX_CHAT_ID", ""))
+        max_footer = st.text_input(
+            "Футер (ссылка/текст в конце поста)",
+            value=env.get("MAX_FOOTER", ""),
+            placeholder="👉 Подробнее: ...",
+            help="Добавляется в конец каждого поста в Max. Только plain text.",
+        )
     else:
         max_token = env.get("MAX_BOT_TOKEN", "")
         max_chat = env.get("MAX_CHAT_ID", "")
+        max_footer = env.get("MAX_FOOTER", "")
 
     if "pinterest" in publish_targets:
         st.divider()
         st.subheader("📌 Pinterest")
         pin_token = st.text_input("Pinterest Access Token", value=env.get("PINTEREST_ACCESS_TOKEN", ""), type="password")
         pin_board = st.text_input("Pinterest Board ID", value=env.get("PINTEREST_BOARD_ID", ""))
+        pin_link = st.text_input(
+            "Ссылка на пине (кнопка «Visit site»)",
+            value=env.get("PINTEREST_LINK", ""),
+            placeholder="https://example.com",
+            help="URL-адрес назначения. Отображается как кнопка «Visit site» на пине. Ссылки в тексте пина НЕ кликабельны.",
+        )
     else:
         pin_token = env.get("PINTEREST_ACCESS_TOKEN", "")
         pin_board = env.get("PINTEREST_BOARD_ID", "")
+        pin_link = env.get("PINTEREST_LINK", "")
 
     st.divider()
     st.subheader("🎭 Face Swap")
@@ -729,6 +775,10 @@ with st.sidebar:
             "PINTEREST_ACCESS_TOKEN": pin_token,
             "PINTEREST_BOARD_ID": pin_board,
             "FACE_SWAP_PROVIDER": face_swap_prov,
+            "TELEGRAM_FOOTER": tg_footer,
+            "VK_FOOTER": vk_footer,
+            "MAX_FOOTER": max_footer,
+            "PINTEREST_LINK": pin_link,
         }
         if replicate_key:
             env_data["REPLICATE_API_KEY"] = replicate_key
@@ -743,6 +793,10 @@ with st.sidebar:
                     face_swap_provider=face_swap_prov,
                     image_source=image_source,
                     publish_targets=publish_targets_str,
+                    telegram_footer=tg_footer,
+                    vk_footer=vk_footer,
+                    max_footer=max_footer,
+                    pinterest_link=pin_link,
                 )
                 if ok:
                     st.success("Провайдеры синхронизированы с GitHub ✅")

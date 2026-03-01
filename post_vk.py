@@ -17,7 +17,7 @@ User token flow:
 
 import requests
 
-from config import VK_ACCESS_TOKEN, VK_GROUP_ID
+from config import VK_ACCESS_TOKEN, VK_GROUP_ID, VK_FOOTER
 from utils import strip_html
 
 _API_VERSION = "5.199"
@@ -92,6 +92,7 @@ def send_post(
     caption: str,
     access_token: str | None = None,
     group_id: str | None = None,
+    footer_text: str | None = None,
 ) -> dict:
     """Send a photo with text to a VK community wall.
 
@@ -116,6 +117,11 @@ def send_post(
     gid = gid.lstrip("-")
 
     plain_text = strip_html(caption)
+
+    # Append platform-specific footer (e.g., VK bot/group link)
+    footer = footer_text if footer_text is not None else VK_FOOTER
+    if footer:
+        plain_text = plain_text + "\n\n" + footer
 
     # Try wall upload first (user token), fall back to messages upload (group token)
     try:
