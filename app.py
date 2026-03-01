@@ -346,27 +346,66 @@ def delete_library_image_from_github(idx: int) -> tuple[bool, str]:
         return False, str(e)
 
 
+_ENV_BACKUP_PATH = "env_backup.json"
+
+# Keys that should be persisted to GitHub (API tokens + credentials)
+_ENV_BACKUP_KEYS = [
+    "CLAUDE_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "REPLICATE_API_KEY",
+    "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHANNEL_ID",
+    "VK_ACCESS_TOKEN", "VK_GROUP_ID",
+    "MAX_BOT_TOKEN", "MAX_CHAT_ID",
+    "PINTEREST_ACCESS_TOKEN", "PINTEREST_BOARD_ID",
+    "GOOGLE_PROJECT_ID", "GOOGLE_LOCATION", "GOOGLE_SERVICE_ACCOUNT_JSON",
+]
+
+
+def sync_env_backup_to_github(env_data: dict) -> tuple[bool, str]:
+    """Save API keys / credentials to env_backup.json on GitHub.
+
+    This ensures that sensitive settings survive Streamlit Cloud restarts,
+    similar to how expert_face.json and image_library.json are persisted.
+    """
+    backup = {k: env_data.get(k, "") for k in _ENV_BACKUP_KEYS if env_data.get(k)}
+    if not backup:
+        return True, ""
+    content = json.dumps(backup, ensure_ascii=False, indent=2)
+    _, sha = read_github_file(_ENV_BACKUP_PATH)
+    return write_github_file(
+        _ENV_BACKUP_PATH, content, sha,
+        "Sync env backup [streamlit]",
+    )
+
+
 def _ensure_settings_from_github() -> None:
-    """Load provider.cfg from GitHub and set missing values in os.environ.
+    """Load provider.cfg + env_backup.json from GitHub into os.environ.
 
     On Streamlit Cloud the .env file is ephemeral — after page reload all
-    settings saved via the sidebar are lost.  provider.cfg on GitHub stores
-    providers, IMAGE_SOURCE, PUBLISH_TARGETS, and platform footers.
-    This function restores them into os.environ so load_env_values() picks
-    them up through its os.environ fallback.
+    settings saved via the sidebar are lost.  This function restores:
+    - provider.cfg: providers, IMAGE_SOURCE, PUBLISH_TARGETS, footers
+    - env_backup.json: API keys, tokens, credentials
     """
+    # 1. Restore non-secret settings from provider.cfg
     cfg = read_provider_cfg_from_github()
-    if not cfg:
-        return
-    # Keys stored in provider.cfg (non-secret settings)
-    for key in (
-        "TEXT_PROVIDER", "IMAGE_PROVIDER", "FACE_SWAP_PROVIDER",
-        "IMAGE_SOURCE", "PUBLISH_TARGETS", "AUTOPUBLISH_ENABLED",
-        "TELEGRAM_FOOTER", "VK_FOOTER", "MAX_FOOTER", "PINTEREST_LINK",
-    ):
-        val = cfg.get(key, "")
-        if val and not os.environ.get(key):
-            os.environ[key] = val
+    if cfg:
+        for key in (
+            "TEXT_PROVIDER", "IMAGE_PROVIDER", "FACE_SWAP_PROVIDER",
+            "IMAGE_SOURCE", "PUBLISH_TARGETS", "AUTOPUBLISH_ENABLED",
+            "TELEGRAM_FOOTER", "VK_FOOTER", "MAX_FOOTER", "PINTEREST_LINK",
+        ):
+            val = cfg.get(key, "")
+            if val and not os.environ.get(key):
+                os.environ[key] = val
+
+    # 2. Restore API keys / credentials from env_backup.json
+    content, _ = read_github_file(_ENV_BACKUP_PATH)
+    if content:
+        try:
+            backup = json.loads(content)
+            for key, val in backup.items():
+                if val and not os.environ.get(key):
+                    os.environ[key] = val
+        except Exception:
+            pass
 
 
 def _ensure_image_library_from_github() -> None:
@@ -833,10 +872,16 @@ with st.sidebar:
                     st.success("Провайдеры синхронизированы с GitHub ✅")
                 else:
                     st.warning(f"Не удалось обновить provider.cfg на GitHub: {err}")
+                # Also backup API keys / credentials to GitHub
+                ok2, err2 = sync_env_backup_to_github(env_data)
+                if ok2:
+                    st.success("API-ключи сохранены на GitHub ✅")
+                else:
+                    st.warning(f"Не удалось сохранить ключи на GitHub: {err2}")
             except Exception as e:
                 st.warning(f"Ошибка синхронизации с GitHub: {e}")
         else:
-            st.info("💡 Добавьте GITHUB_TOKEN для авто-синхронизации провайдеров с GitHub Actions")
+            st.info("💡 Добавьте GITHUB_TOKEN для авто-синхронизации с GitHub")
 
 # ── Tabs ─────────────────────────────────────────────────────────────────────
 
