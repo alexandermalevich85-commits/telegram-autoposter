@@ -1,5 +1,5 @@
 {
-  "status": "pending",
+  "status": "published",
   "created_at": "2026-03-01T17:44:48.940401",
   "idea": "Японский массаж Асахи: пошаговая инструкция",
   "idea_index": 8,
@@ -9,7 +9,10 @@
   "text_provider": "gemini",
   "image_provider": "library",
   "face_swap_provider": "",
-  "published_at": null,
-  "message_id": null,
-  "published_by": null
+  "published_at": "2026-03-01T17:45:38.728350",
+  "message_id": "wall-93769259_73133",
+  "published_by": "manual",
+  "platform_ids": {
+    "vk": "wall-93769259_73133"
+  }
 }
