@@ -3,6 +3,10 @@
     {
       "index": 1,
       "filename": "1.jpg"
+    },
+    {
+      "index": 2,
+      "filename": "2.jpg"
     }
   ],
   "next_index": 0
