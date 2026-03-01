@@ -144,27 +144,30 @@ def send_post(
     if footer:
         plain_text = plain_text + "\n\n" + footer
 
-    # Try wall upload first (user token), fall back to messages upload (group token)
-    # Catch ANY error — not just "group auth" — because VK may return different
-    # error messages for community tokens, and even a "successful" wall upload
-    # can produce an unusable attachment with some token types.
+    # Try Messages upload first (works reliably with community tokens),
+    # fall back to Wall upload (works with user tokens).
+    #
+    # Reason: community tokens can sometimes "succeed" with Wall upload
+    # but produce an attachment that VK silently ignores in wall.post,
+    # resulting in a post without an image.  Messages upload + access_key
+    # is the reliable method for community tokens.
     attachment = None
-    wall_err = None
+    msg_err = None
     try:
-        attachment = _upload_photo_wall(token, gid, photo_path)
-        log.info("Photo uploaded via Wall method")
+        attachment = _upload_photo_messages(token, gid, photo_path)
+        log.info("Photo uploaded via Messages method")
     except Exception as e:
-        wall_err = e
-        log.info("Wall upload failed (%s), trying Messages upload...", e)
+        msg_err = e
+        log.info("Messages upload failed (%s), trying Wall upload...", e)
 
     if attachment is None:
         try:
-            attachment = _upload_photo_messages(token, gid, photo_path)
-            log.info("Photo uploaded via Messages method")
+            attachment = _upload_photo_wall(token, gid, photo_path)
+            log.info("Photo uploaded via Wall method")
         except Exception as e:
             # Both methods failed — raise combined error
             raise RuntimeError(
-                f"VK photo upload failed. Wall: {wall_err}; Messages: {e}"
+                f"VK photo upload failed. Messages: {msg_err}; Wall: {e}"
             ) from e
 
     log.info("Final attachment string: %s", attachment)
