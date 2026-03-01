@@ -59,11 +59,21 @@ def _upload_photo_wall(token: str, gid: str, photo_path: str) -> str:
     })
 
     info = save_resp["response"][0]
-    return f"photo{info['owner_id']}_{info['id']}"
+    attachment = f"photo{info['owner_id']}_{info['id']}"
+    if info.get("access_key"):
+        attachment += f"_{info['access_key']}"
+    return attachment
 
 
 def _upload_photo_messages(token: str, gid: str, photo_path: str) -> str:
-    """Upload photo via Messages Upload Server (community token)."""
+    """Upload photo via Messages Upload Server (community token).
+
+    Photos saved via saveMessagesPhoto belong to the bot/community messages
+    album, NOT the wall album. To attach them to a wall.post, VK requires
+    the ``access_key`` that is returned alongside the photo metadata.
+    Without it the attachment silently resolves to nothing and the post
+    appears without an image.
+    """
     resp = _vk_post("photos.getMessagesUploadServer", {
         "group_id": gid, "access_token": token,
     })
@@ -84,7 +94,11 @@ def _upload_photo_messages(token: str, gid: str, photo_path: str) -> str:
     })
 
     info = save_resp["response"][0]
-    return f"photo{info['owner_id']}_{info['id']}"
+    attachment = f"photo{info['owner_id']}_{info['id']}"
+    # access_key is REQUIRED for message-album photos used in wall posts
+    if info.get("access_key"):
+        attachment += f"_{info['access_key']}"
+    return attachment
 
 
 def send_post(
