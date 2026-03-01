@@ -94,7 +94,7 @@ jobs:
           TEXT_PROVIDER: ${{ github.event.inputs.text_provider || steps.providers.outputs.text || 'openai' }}
           IMAGE_PROVIDER: ${{ github.event.inputs.image_provider || steps.providers.outputs.image || 'openai' }}
           FACE_SWAP_PROVIDER: ${{ steps.providers.outputs.face_swap }}
-          IMAGE_SOURCE: ${{ steps.providers.outputs.image_source || 'generate' }}
+          IMAGE_SOURCE: ${{ steps.providers.outputs.image_source || 'library' }}
           CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -172,7 +172,7 @@ jobs:
       - name: Publish pending draft
         if: steps.check.outputs.enabled != 'false'
         env:
-          PUBLISH_TARGETS: ${{ steps.providers.outputs.publish_targets || 'telegram' }}
+          PUBLISH_TARGETS: ${{ steps.providers.outputs.publish_targets || 'telegram,vk' }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
           TELEGRAM_FOOTER: ${{ steps.providers.outputs.telegram_footer }}
@@ -245,8 +245,8 @@ jobs:
           TEXT_PROVIDER: ${{ github.event.inputs.text_provider || steps.providers.outputs.text || 'openai' }}
           IMAGE_PROVIDER: ${{ github.event.inputs.image_provider || steps.providers.outputs.image || 'openai' }}
           FACE_SWAP_PROVIDER: ${{ steps.providers.outputs.face_swap }}
-          IMAGE_SOURCE: ${{ steps.providers.outputs.image_source || 'generate' }}
-          PUBLISH_TARGETS: ${{ steps.providers.outputs.publish_targets || 'telegram' }}
+          IMAGE_SOURCE: ${{ steps.providers.outputs.image_source || 'library' }}
+          PUBLISH_TARGETS: ${{ steps.providers.outputs.publish_targets || 'telegram,vk' }}
           CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

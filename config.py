@@ -22,7 +22,7 @@ def _get(key: str, default: str = "") -> str:
 # Provider selection
 TEXT_PROVIDER = _get("TEXT_PROVIDER", "claude").lower()    # claude | gemini | openai
 IMAGE_PROVIDER = _get("IMAGE_PROVIDER", "gemini").lower()  # gemini | openai
-IMAGE_SOURCE = _get("IMAGE_SOURCE", "generate").lower()    # generate | library
+IMAGE_SOURCE = _get("IMAGE_SOURCE", "library").lower()    # generate | library
 
 # API keys
 CLAUDE_API_KEY = _get("CLAUDE_API_KEY")
@@ -55,7 +55,7 @@ PINTEREST_ACCESS_TOKEN = _get("PINTEREST_ACCESS_TOKEN")
 PINTEREST_BOARD_ID = _get("PINTEREST_BOARD_ID")
 
 # Publish targets (comma-separated: telegram,vk,max,pinterest)
-PUBLISH_TARGETS = _get("PUBLISH_TARGETS", "telegram").lower()
+PUBLISH_TARGETS = _get("PUBLISH_TARGETS", "telegram,vk").lower()
 
 # Platform-specific footers (appended to post text at publish time)
 TELEGRAM_FOOTER = _get("TELEGRAM_FOOTER")    # e.g. "👉 @my_bot"

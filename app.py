@@ -172,10 +172,10 @@ def update_github_provider_cfg(
         face_swap_provider = current.get("FACE_SWAP_PROVIDER", "")
 
     if image_source is None:
-        image_source = current.get("IMAGE_SOURCE", "generate")
+        image_source = current.get("IMAGE_SOURCE", "library")
 
     if publish_targets is None:
-        publish_targets = current.get("PUBLISH_TARGETS", "telegram")
+        publish_targets = current.get("PUBLISH_TARGETS", "telegram,vk")
 
     if telegram_footer is None:
         telegram_footer = current.get("TELEGRAM_FOOTER", "")
@@ -346,6 +346,29 @@ def delete_library_image_from_github(idx: int) -> tuple[bool, str]:
         return False, str(e)
 
 
+def _ensure_settings_from_github() -> None:
+    """Load provider.cfg from GitHub and set missing values in os.environ.
+
+    On Streamlit Cloud the .env file is ephemeral — after page reload all
+    settings saved via the sidebar are lost.  provider.cfg on GitHub stores
+    providers, IMAGE_SOURCE, PUBLISH_TARGETS, and platform footers.
+    This function restores them into os.environ so load_env_values() picks
+    them up through its os.environ fallback.
+    """
+    cfg = read_provider_cfg_from_github()
+    if not cfg:
+        return
+    # Keys stored in provider.cfg (non-secret settings)
+    for key in (
+        "TEXT_PROVIDER", "IMAGE_PROVIDER", "FACE_SWAP_PROVIDER",
+        "IMAGE_SOURCE", "PUBLISH_TARGETS", "AUTOPUBLISH_ENABLED",
+        "TELEGRAM_FOOTER", "VK_FOOTER", "MAX_FOOTER", "PINTEREST_LINK",
+    ):
+        val = cfg.get(key, "")
+        if val and not os.environ.get(key):
+            os.environ[key] = val
+
+
 def _ensure_image_library_from_github() -> None:
     """If local image_library.json is missing, restore library from GitHub.
 
@@ -420,6 +443,9 @@ def save_env(values: dict):
     lines = []
     for key, val in values.items():
         lines.append(f"{key}={val}")
+        # Also update os.environ so values survive within the same process
+        # (on Streamlit Cloud .env is ephemeral but os.environ persists until restart)
+        os.environ[key] = str(val)
     with open(ENV_FILE, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
@@ -552,7 +578,8 @@ st.set_page_config(
 
 st.title("📱 Автопостер для Telegram")
 
-# Restore image library from GitHub if missing locally (Streamlit Cloud is ephemeral)
+# Restore settings & image library from GitHub (Streamlit Cloud is ephemeral)
+_ensure_settings_from_github()
 _ensure_image_library_from_github()
 
 # Show flash messages saved before st.rerun()
@@ -579,7 +606,7 @@ with st.sidebar:
 
     image_source_options = ["generate", "library"]
     image_source_labels = ["AI-генерация", "Библиотека картинок"]
-    current_img_src = env.get("IMAGE_SOURCE", "generate")
+    current_img_src = env.get("IMAGE_SOURCE", "library")
     img_src_index = image_source_options.index(current_img_src) if current_img_src in image_source_options else 0
     image_source = st.radio(
         "Откуда брать картинки для постов",
@@ -617,7 +644,7 @@ with st.sidebar:
     st.subheader("📡 Платформы публикации")
 
     all_targets = ["telegram", "vk", "max", "pinterest"]
-    current_targets = [t.strip() for t in env.get("PUBLISH_TARGETS", "telegram").split(",") if t.strip()]
+    current_targets = [t.strip() for t in env.get("PUBLISH_TARGETS", "telegram,vk").split(",") if t.strip()]
     publish_targets = st.multiselect(
         "Куда публиковать",
         all_targets,
@@ -1208,7 +1235,7 @@ with tab_create:
         with col_pub:
             if st.button("📤 Опубликовать", use_container_width=True, type="primary"):
                 env = load_env_values()
-                targets = [t.strip() for t in env.get("PUBLISH_TARGETS", "telegram").split(",") if t.strip()]
+                targets = [t.strip() for t in env.get("PUBLISH_TARGETS", "telegram,vk").split(",") if t.strip()]
                 if "image_path" not in st.session_state:
                     st.error("Сначала сгенерируйте картинку!")
                 elif not targets:
@@ -1625,7 +1652,7 @@ with tab_auto:
                     if st.button("📤 Опубликовать", key="draft_publish",
                                  use_container_width=True, type="primary"):
                         env = load_env_values()
-                        targets = [t.strip() for t in env.get("PUBLISH_TARGETS", "telegram").split(",") if t.strip()]
+                        targets = [t.strip() for t in env.get("PUBLISH_TARGETS", "telegram,vk").split(",") if t.strip()]
 
                         if not targets:
                             st.error("Выберите хотя бы одну платформу!")
