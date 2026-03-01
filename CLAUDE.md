@@ -29,6 +29,7 @@
 | `post_vk.py` | Отправка в ВКонтакте |
 | `post_max.py` | Отправка в Max (бывш. TamTam) |
 | `post_pinterest.py` | Отправка в Pinterest |
+| `utils.py` | Общие утилиты: `strip_html`, `image_to_base64`, `base64_to_tempfile`, `detect_content_type`, `retry` |
 | `document_parser.py` | Парсинг PDF/DOCX/TXT документов |
 
 **Данные (JSON):**
@@ -209,10 +210,10 @@ def _publish_to_platforms(photo_path, caption, targets, env) -> dict:
 - HTML-разметка поддерживается (`parse_mode=HTML`)
 
 ### HTML → Plain Text
-VK, Max и Pinterest не поддерживают HTML-разметку. Все три модуля содержат `_strip_html()`:
+VK, Max и Pinterest не поддерживают HTML-разметку. Все три модуля используют `strip_html()` из `utils.py`:
 ```python
-def _strip_html(text: str) -> str:
-    return re.sub(r"<[^>]+>", "", text)
+from utils import strip_html
+plain_text = strip_html(caption)  # <br> → \n, удаляет теги, декодирует HTML-entities
 ```
 
 ### История и platform_ids
