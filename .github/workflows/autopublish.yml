@@ -150,11 +150,28 @@ jobs:
         if: steps.check.outputs.enabled != 'false'
         run: pip install anthropic google-genai openai replicate requests python-dotenv Pillow pypdf python-docx
 
+      - name: Read provider config
+        if: steps.check.outputs.enabled != 'false'
+        id: providers
+        run: |
+          if [ -f provider.cfg ]; then
+            echo "publish_targets=$(grep PUBLISH_TARGETS provider.cfg | cut -d= -f2)" >> $GITHUB_OUTPUT
+          else
+            echo "publish_targets=telegram" >> $GITHUB_OUTPUT
+          fi
+
       - name: Publish pending draft
         if: steps.check.outputs.enabled != 'false'
         env:
+          PUBLISH_TARGETS: ${{ steps.providers.outputs.publish_targets || 'telegram' }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          VK_ACCESS_TOKEN: ${{ secrets.VK_ACCESS_TOKEN }}
+          VK_GROUP_ID: ${{ secrets.VK_GROUP_ID }}
+          MAX_BOT_TOKEN: ${{ secrets.MAX_BOT_TOKEN }}
+          MAX_CHAT_ID: ${{ secrets.MAX_CHAT_ID }}
+          PINTEREST_ACCESS_TOKEN: ${{ secrets.PINTEREST_ACCESS_TOKEN }}
+          PINTEREST_BOARD_ID: ${{ secrets.PINTEREST_BOARD_ID }}
         run: python main.py publish
 
       - name: Commit updated files
@@ -163,7 +180,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add pending_post.json ideas.json history.json
-          git diff --staged --quiet || git commit -m "Phase 2: auto-published to Telegram [bot]"
+          git diff --staged --quiet || git commit -m "Phase 2: auto-published [bot]"
           git push
 
 # ── Full pipeline (legacy, for manual dispatch) ─────────────────────────────
@@ -193,11 +210,13 @@ jobs:
             echo "image=$(grep IMAGE_PROVIDER provider.cfg | cut -d= -f2)" >> $GITHUB_OUTPUT
             echo "face_swap=$(grep FACE_SWAP_PROVIDER provider.cfg | cut -d= -f2)" >> $GITHUB_OUTPUT
             echo "image_source=$(grep IMAGE_SOURCE provider.cfg | cut -d= -f2)" >> $GITHUB_OUTPUT
+            echo "publish_targets=$(grep PUBLISH_TARGETS provider.cfg | cut -d= -f2)" >> $GITHUB_OUTPUT
           else
             echo "text=openai" >> $GITHUB_OUTPUT
             echo "image=openai" >> $GITHUB_OUTPUT
             echo "face_swap=" >> $GITHUB_OUTPUT
             echo "image_source=generate" >> $GITHUB_OUTPUT
+            echo "publish_targets=telegram" >> $GITHUB_OUTPUT
           fi
 
       - name: Run full autoposter
@@ -206,6 +225,7 @@ jobs:
           IMAGE_PROVIDER: ${{ github.event.inputs.image_provider || steps.providers.outputs.image || 'openai' }}
           FACE_SWAP_PROVIDER: ${{ steps.providers.outputs.face_swap }}
           IMAGE_SOURCE: ${{ steps.providers.outputs.image_source || 'generate' }}
+          PUBLISH_TARGETS: ${{ steps.providers.outputs.publish_targets || 'telegram' }}
           CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -215,6 +235,12 @@ jobs:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          VK_ACCESS_TOKEN: ${{ secrets.VK_ACCESS_TOKEN }}
+          VK_GROUP_ID: ${{ secrets.VK_GROUP_ID }}
+          MAX_BOT_TOKEN: ${{ secrets.MAX_BOT_TOKEN }}
+          MAX_CHAT_ID: ${{ secrets.MAX_CHAT_ID }}
+          PINTEREST_ACCESS_TOKEN: ${{ secrets.PINTEREST_ACCESS_TOKEN }}
+          PINTEREST_BOARD_ID: ${{ secrets.PINTEREST_BOARD_ID }}
         run: python main.py full
 
       - name: Commit updated files

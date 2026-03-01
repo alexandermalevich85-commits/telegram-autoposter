@@ -42,6 +42,21 @@ GOOGLE_SERVICE_ACCOUNT_JSON = _get("GOOGLE_SERVICE_ACCOUNT_JSON")
 TELEGRAM_BOT_TOKEN = _get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHANNEL_ID = _get("TELEGRAM_CHANNEL_ID")
 
+# VKontakte
+VK_ACCESS_TOKEN = _get("VK_ACCESS_TOKEN")
+VK_GROUP_ID = _get("VK_GROUP_ID")
+
+# Max messenger
+MAX_BOT_TOKEN = _get("MAX_BOT_TOKEN")
+MAX_CHAT_ID = _get("MAX_CHAT_ID")
+
+# Pinterest
+PINTEREST_ACCESS_TOKEN = _get("PINTEREST_ACCESS_TOKEN")
+PINTEREST_BOARD_ID = _get("PINTEREST_BOARD_ID")
+
+# Publish targets (comma-separated: telegram,vk,max,pinterest)
+PUBLISH_TARGETS = _get("PUBLISH_TARGETS", "telegram").lower()
+
 # GitHub (for syncing provider.cfg from Streamlit UI)
 GITHUB_TOKEN = _get("GITHUB_TOKEN")
 

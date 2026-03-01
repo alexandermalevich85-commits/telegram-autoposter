@@ -9,11 +9,10 @@ from datetime import datetime
 
 from PIL import Image
 
-from config import TEXT_PROVIDER, IMAGE_PROVIDER, FACE_SWAP_PROVIDER, IMAGE_SOURCE
+from config import TEXT_PROVIDER, IMAGE_PROVIDER, FACE_SWAP_PROVIDER, IMAGE_SOURCE, PUBLISH_TARGETS
 from generate_text import generate_post
 from generate_image import generate_image
 from face_swap import apply_face_swap
-from post_telegram import send_post
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 IDEAS_FILE = os.path.join(BASE_DIR, "ideas.json")
@@ -64,16 +63,19 @@ def save_pending(data: dict) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-def add_history_entry(idea: str, post_text: str, message_id: int) -> None:
+def add_history_entry(idea: str, post_text: str, message_id, platform_ids: dict | None = None) -> None:
     history = load_history()
-    history.append({
+    entry = {
         "date": datetime.now().isoformat(),
         "idea": idea,
         "post_text": post_text,
         "text_provider": TEXT_PROVIDER,
         "image_provider": IMAGE_PROVIDER,
         "message_id": message_id,
-    })
+    }
+    if platform_ids:
+        entry["platform_ids"] = platform_ids
+    history.append(entry)
     save_history(history)
 
 
@@ -104,6 +106,34 @@ def base64_to_tempfile(b64_string: str) -> str:
     with open(path, "wb") as f:
         f.write(data)
     return path
+
+
+def publish_to_all(image_path: str, caption: str) -> dict:
+    """Publish to all configured platforms. Returns {platform: message_id} for successes."""
+    targets = [t.strip() for t in PUBLISH_TARGETS.split(",") if t.strip()]
+    platform_ids = {}
+    for target in targets:
+        try:
+            if target == "telegram":
+                from post_telegram import send_post as tg_send
+                r = tg_send(image_path, caption)
+                platform_ids["telegram"] = r["result"]["message_id"]
+            elif target == "vk":
+                from post_vk import send_post as vk_send
+                r = vk_send(image_path, caption)
+                platform_ids["vk"] = r["result"]["message_id"]
+            elif target == "max":
+                from post_max import send_post as max_send
+                r = max_send(image_path, caption)
+                platform_ids["max"] = r["result"]["message_id"]
+            elif target == "pinterest":
+                from post_pinterest import send_post as pin_send
+                r = pin_send(image_path, caption)
+                platform_ids["pinterest"] = r["result"]["message_id"]
+            log.info("Published to %s: %s", target, platform_ids.get(target))
+        except Exception as e:
+            log.error("Failed to publish to %s: %s", target, e)
+    return platform_ids
 
 
 # ── Commands ─────────────────────────────────────────────────────────────────
@@ -287,15 +317,19 @@ def cmd_publish() -> None:
     image_path = base64_to_tempfile(pending["image_base64"])
 
     try:
-        log.info("Sending to Telegram...")
-        result = send_post(image_path, pending["post_text"])
-        message_id = result["result"]["message_id"]
-        log.info("Posted successfully, message_id=%s", message_id)
+        log.info("Publishing to platforms: %s", PUBLISH_TARGETS)
+        platform_ids = publish_to_all(image_path, pending["post_text"])
     finally:
         try:
             os.remove(image_path)
         except OSError:
             pass
+
+    if not platform_ids:
+        log.error("Failed to publish to any platform!")
+        sys.exit(1)
+
+    message_id = platform_ids.get("telegram", list(platform_ids.values())[0])
 
     # Mark idea as used
     ideas = load_ideas()
@@ -306,17 +340,18 @@ def cmd_publish() -> None:
         log.info("Idea #%d marked as used", idx)
 
     # Save history
-    add_history_entry(pending["idea"], pending["post_text"], message_id)
+    add_history_entry(pending["idea"], pending["post_text"], message_id, platform_ids)
     log.info("History entry saved")
 
     # Update pending status
     pending["status"] = "published"
     pending["published_at"] = datetime.now().isoformat()
     pending["message_id"] = message_id
+    pending["platform_ids"] = platform_ids
     pending["published_by"] = "auto"
     save_pending(pending)
 
-    log.info("Phase 2 done!")
+    log.info("Phase 2 done! Published to: %s", ", ".join(platform_ids.keys()))
 
 
 def cmd_full() -> None:
@@ -395,16 +430,20 @@ def cmd_full() -> None:
             except Exception as e:
                 log.warning("Face swap failed, using original image: %s", e)
 
-    log.info("Sending to Telegram...")
-    result = send_post(image_path, post_text)
-    message_id = result["result"]["message_id"]
-    log.info("Posted successfully, message_id=%s", message_id)
+    log.info("Publishing to platforms: %s", PUBLISH_TARGETS)
+    platform_ids = publish_to_all(image_path, post_text)
+
+    if not platform_ids:
+        log.error("Failed to publish to any platform!")
+        sys.exit(1)
+
+    message_id = platform_ids.get("telegram", list(platform_ids.values())[0])
 
     ideas[idx]["used"] = True
     save_ideas(ideas)
     log.info("Idea #%d marked as used", idx)
 
-    add_history_entry(idea, post_text, message_id)
+    add_history_entry(idea, post_text, message_id, platform_ids)
     log.info("History entry saved")
 
     if image_path:
@@ -413,7 +452,7 @@ def cmd_full() -> None:
         except OSError:
             pass
 
-    log.info("Done!")
+    log.info("Done! Published to: %s", ", ".join(platform_ids.keys()))
 
 
 def main() -> None:

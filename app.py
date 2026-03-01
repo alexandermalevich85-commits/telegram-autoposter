@@ -12,10 +12,16 @@ from PIL import Image
 # Bridge st.secrets → os.environ BEFORE importing project modules
 # so that config.py (which uses os.getenv) picks up Streamlit Cloud secrets.
 _SECRET_KEYS = [
-    "TEXT_PROVIDER", "IMAGE_PROVIDER", "IMAGE_SOURCE",
+    "TEXT_PROVIDER", "IMAGE_PROVIDER", "IMAGE_SOURCE", "PUBLISH_TARGETS",
     "CLAUDE_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY",
     "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHANNEL_ID", "GITHUB_TOKEN",
     "FACE_SWAP_PROVIDER", "REPLICATE_API_KEY",
+    # VK
+    "VK_ACCESS_TOKEN", "VK_GROUP_ID",
+    # Max messenger
+    "MAX_BOT_TOKEN", "MAX_CHAT_ID",
+    # Pinterest
+    "PINTEREST_ACCESS_TOKEN", "PINTEREST_BOARD_ID",
     # Vertex AI (alternative to GEMINI_API_KEY)
     "GOOGLE_PROJECT_ID", "GOOGLE_LOCATION", "GOOGLE_SERVICE_ACCOUNT_JSON",
 ]
@@ -138,6 +144,7 @@ def update_github_provider_cfg(
     autopublish_enabled: bool | None = None,
     face_swap_provider: str | None = None,
     image_source: str | None = None,
+    publish_targets: str | None = None,
 ) -> tuple[bool, str]:
     """Update provider.cfg in GitHub repo.
 
@@ -161,6 +168,9 @@ def update_github_provider_cfg(
     if image_source is None:
         image_source = current.get("IMAGE_SOURCE", "generate")
 
+    if publish_targets is None:
+        publish_targets = current.get("PUBLISH_TARGETS", "telegram")
+
     enabled_str = "true" if autopublish_enabled else "false"
     new_content = (
         f"TEXT_PROVIDER={text_provider}\n"
@@ -168,6 +178,7 @@ def update_github_provider_cfg(
         f"AUTOPUBLISH_ENABLED={enabled_str}\n"
         f"FACE_SWAP_PROVIDER={face_swap_provider}\n"
         f"IMAGE_SOURCE={image_source}\n"
+        f"PUBLISH_TARGETS={publish_targets}\n"
     )
 
     return write_github_file(
@@ -412,6 +423,56 @@ def load_env_values() -> dict:
     return values
 
 
+_PLATFORM_LABELS = {
+    "telegram": "Telegram",
+    "vk": "ВКонтакте",
+    "max": "Max",
+    "pinterest": "Pinterest",
+}
+
+
+def _publish_to_platforms(
+    photo_path: str,
+    caption: str,
+    targets: list[str],
+    env: dict,
+) -> dict:
+    """Publish to multiple platforms. Returns {platform: {"ok":..., "message_id":..., "error":...}}."""
+    results = {}
+    for target in targets:
+        target = target.strip()
+        if not target:
+            continue
+        try:
+            if target == "telegram":
+                from post_telegram import send_post as tg_send
+                r = tg_send(photo_path, caption,
+                            bot_token=env.get("TELEGRAM_BOT_TOKEN"),
+                            channel_id=env.get("TELEGRAM_CHANNEL_ID"))
+                results["telegram"] = {"ok": True, "message_id": r["result"]["message_id"]}
+            elif target == "vk":
+                from post_vk import send_post as vk_send
+                r = vk_send(photo_path, caption,
+                            access_token=env.get("VK_ACCESS_TOKEN"),
+                            group_id=env.get("VK_GROUP_ID"))
+                results["vk"] = {"ok": True, "message_id": r["result"]["message_id"]}
+            elif target == "max":
+                from post_max import send_post as max_send
+                r = max_send(photo_path, caption,
+                             bot_token=env.get("MAX_BOT_TOKEN"),
+                             chat_id=env.get("MAX_CHAT_ID"))
+                results["max"] = {"ok": True, "message_id": r["result"]["message_id"]}
+            elif target == "pinterest":
+                from post_pinterest import send_post as pin_send
+                r = pin_send(photo_path, caption,
+                             access_token=env.get("PINTEREST_ACCESS_TOKEN"),
+                             board_id=env.get("PINTEREST_BOARD_ID"))
+                results["pinterest"] = {"ok": True, "message_id": r["result"]["message_id"]}
+        except Exception as e:
+            results[target] = {"ok": False, "error": str(e)}
+    return results
+
+
 def get_expert_face_b64() -> str | None:
     """Get expert face base64: try local file first, then GitHub."""
     # 1. Try local file
@@ -530,10 +591,48 @@ with st.sidebar:
     openai_key = st.text_input("OpenAI API Key", value=env.get("OPENAI_API_KEY", ""), type="password")
 
     st.divider()
-    st.subheader("📨 Telegram")
+    st.subheader("📡 Платформы публикации")
 
+    all_targets = ["telegram", "vk", "max", "pinterest"]
+    current_targets = [t.strip() for t in env.get("PUBLISH_TARGETS", "telegram").split(",") if t.strip()]
+    publish_targets = st.multiselect(
+        "Куда публиковать",
+        all_targets,
+        default=[t for t in current_targets if t in all_targets] or ["telegram"],
+        format_func=lambda x: _PLATFORM_LABELS.get(x, x),
+    )
+
+    st.divider()
+    st.subheader("📨 Telegram")
     tg_token = st.text_input("Bot Token", value=env.get("TELEGRAM_BOT_TOKEN", ""), type="password")
     tg_channel = st.text_input("Channel ID", value=env.get("TELEGRAM_CHANNEL_ID", ""))
+
+    if "vk" in publish_targets:
+        st.divider()
+        st.subheader("📘 ВКонтакте")
+        vk_token = st.text_input("VK Access Token", value=env.get("VK_ACCESS_TOKEN", ""), type="password")
+        vk_group = st.text_input("VK Group ID (без минуса)", value=env.get("VK_GROUP_ID", ""))
+    else:
+        vk_token = env.get("VK_ACCESS_TOKEN", "")
+        vk_group = env.get("VK_GROUP_ID", "")
+
+    if "max" in publish_targets:
+        st.divider()
+        st.subheader("💬 Max")
+        max_token = st.text_input("Max Bot Token", value=env.get("MAX_BOT_TOKEN", ""), type="password")
+        max_chat = st.text_input("Max Chat ID канала", value=env.get("MAX_CHAT_ID", ""))
+    else:
+        max_token = env.get("MAX_BOT_TOKEN", "")
+        max_chat = env.get("MAX_CHAT_ID", "")
+
+    if "pinterest" in publish_targets:
+        st.divider()
+        st.subheader("📌 Pinterest")
+        pin_token = st.text_input("Pinterest Access Token", value=env.get("PINTEREST_ACCESS_TOKEN", ""), type="password")
+        pin_board = st.text_input("Pinterest Board ID", value=env.get("PINTEREST_BOARD_ID", ""))
+    else:
+        pin_token = env.get("PINTEREST_ACCESS_TOKEN", "")
+        pin_board = env.get("PINTEREST_BOARD_ID", "")
 
     st.divider()
     st.subheader("🎭 Face Swap")
@@ -610,16 +709,25 @@ with st.sidebar:
         else:
             st.success("Фото эксперта сохранено локально ✅")
 
+    publish_targets_str = ",".join(publish_targets)
+
     if st.button("💾 Сохранить настройки", use_container_width=True):
         env_data = {
             "TEXT_PROVIDER": text_prov,
             "IMAGE_PROVIDER": image_prov,
             "IMAGE_SOURCE": image_source,
+            "PUBLISH_TARGETS": publish_targets_str,
             "CLAUDE_API_KEY": claude_key,
             "GEMINI_API_KEY": gemini_key,
             "OPENAI_API_KEY": openai_key,
             "TELEGRAM_BOT_TOKEN": tg_token,
             "TELEGRAM_CHANNEL_ID": tg_channel,
+            "VK_ACCESS_TOKEN": vk_token,
+            "VK_GROUP_ID": vk_group,
+            "MAX_BOT_TOKEN": max_token,
+            "MAX_CHAT_ID": max_chat,
+            "PINTEREST_ACCESS_TOKEN": pin_token,
+            "PINTEREST_BOARD_ID": pin_board,
             "FACE_SWAP_PROVIDER": face_swap_prov,
         }
         if replicate_key:
@@ -634,6 +742,7 @@ with st.sidebar:
                     text_prov, image_prov,
                     face_swap_provider=face_swap_prov,
                     image_source=image_source,
+                    publish_targets=publish_targets_str,
                 )
                 if ok:
                     st.success("Провайдеры синхронизированы с GitHub ✅")
@@ -1039,55 +1148,68 @@ with tab_create:
         col_pub, col_regen = st.columns(2)
 
         with col_pub:
-            if st.button("📤 Опубликовать в Telegram", use_container_width=True, type="primary"):
+            if st.button("📤 Опубликовать", use_container_width=True, type="primary"):
                 env = load_env_values()
-                if not env.get("TELEGRAM_BOT_TOKEN") or not env.get("TELEGRAM_CHANNEL_ID"):
-                    st.error("Заполните Telegram Bot Token и Channel ID в настройках!")
-                elif "image_path" not in st.session_state:
+                targets = [t.strip() for t in env.get("PUBLISH_TARGETS", "telegram").split(",") if t.strip()]
+                if "image_path" not in st.session_state:
                     st.error("Сначала сгенерируйте картинку!")
+                elif not targets:
+                    st.error("Выберите хотя бы одну платформу в настройках!")
                 else:
-                    with st.spinner("Публикую..."):
+                    with st.spinner(f"Публикую на {', '.join(_PLATFORM_LABELS.get(t, t) for t in targets)}..."):
                         try:
-                            result = send_post(
+                            pub_results = _publish_to_platforms(
                                 st.session_state["image_path"],
                                 st.session_state["post_text"],
-                                bot_token=env.get("TELEGRAM_BOT_TOKEN"),
-                                channel_id=env.get("TELEGRAM_CHANNEL_ID"),
+                                targets, env,
                             )
-                            msg_id = result["result"]["message_id"]
 
-                            # Mark idea as used
-                            current_idea = st.session_state.get("idea", "")
-                            ideas = load_json(IDEAS_FILE, [])
-                            for item in ideas:
-                                if item["idea"] == current_idea and not item.get("used"):
-                                    item["used"] = True
-                                    break
-                            save_json(IDEAS_FILE, ideas)
+                            # Show results per platform
+                            any_ok = False
+                            platform_ids = {}
+                            for plat, pr in pub_results.items():
+                                if pr["ok"]:
+                                    any_ok = True
+                                    platform_ids[plat] = pr["message_id"]
+                                else:
+                                    st.warning(f"{_PLATFORM_LABELS.get(plat, plat)}: {pr['error']}")
 
-                            # Save history
-                            history = load_json(HISTORY_FILE, [])
-                            history.append({
-                                "date": datetime.now().isoformat(),
-                                "idea": current_idea,
-                                "post_text": st.session_state["post_text"],
-                                "text_provider": env.get("TEXT_PROVIDER", ""),
-                                "image_provider": env.get("IMAGE_PROVIDER", ""),
-                                "message_id": msg_id,
-                            })
-                            save_json(HISTORY_FILE, history)
+                            if any_ok:
+                                # Mark idea as used
+                                current_idea = st.session_state.get("idea", "")
+                                ideas = load_json(IDEAS_FILE, [])
+                                for item in ideas:
+                                    if item["idea"] == current_idea and not item.get("used"):
+                                        item["used"] = True
+                                        break
+                                save_json(IDEAS_FILE, ideas)
 
-                            # Cleanup
-                            old_path = st.session_state.pop("image_path", None)
-                            if old_path and os.path.exists(old_path):
-                                os.remove(old_path)
-                            st.session_state.pop("post_text", None)
-                            st.session_state.pop("image_prompt", None)
-                            st.session_state.pop("idea", None)
+                                # Save history
+                                history = load_json(HISTORY_FILE, [])
+                                hist_entry = {
+                                    "date": datetime.now().isoformat(),
+                                    "idea": current_idea,
+                                    "post_text": st.session_state["post_text"],
+                                    "text_provider": env.get("TEXT_PROVIDER", ""),
+                                    "image_provider": env.get("IMAGE_PROVIDER", ""),
+                                    "message_id": platform_ids.get("telegram", ""),
+                                    "platform_ids": platform_ids,
+                                }
+                                history.append(hist_entry)
+                                save_json(HISTORY_FILE, history)
 
-                            st.session_state["_flash_success"] = True
-                            st.session_state["_flash_msg"] = f"✅ Опубликовано! message_id: {msg_id}"
-                            st.rerun()
+                                # Cleanup
+                                old_path = st.session_state.pop("image_path", None)
+                                if old_path and os.path.exists(old_path):
+                                    os.remove(old_path)
+                                st.session_state.pop("post_text", None)
+                                st.session_state.pop("image_prompt", None)
+                                st.session_state.pop("idea", None)
+
+                                ok_list = ", ".join(_PLATFORM_LABELS.get(p, p) for p in platform_ids)
+                                st.session_state["_flash_success"] = True
+                                st.session_state["_flash_msg"] = f"✅ Опубликовано: {ok_list}"
+                                st.rerun()
 
                         except Exception as e:
                             st.error(f"Ошибка публикации: {e}")
@@ -1442,101 +1564,111 @@ with tab_auto:
                 col_pub, col_save = st.columns(2)
 
                 with col_pub:
-                    if st.button("📤 Опубликовать в Telegram", key="draft_publish",
+                    if st.button("📤 Опубликовать", key="draft_publish",
                                  use_container_width=True, type="primary"):
                         env = load_env_values()
-                        bot_token = env.get("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN", "")
-                        channel_id = env.get("TELEGRAM_CHANNEL_ID") or os.getenv("TELEGRAM_CHANNEL_ID", "")
+                        targets = [t.strip() for t in env.get("PUBLISH_TARGETS", "telegram").split(",") if t.strip()]
 
-                        if not bot_token or not channel_id:
-                            st.error("Заполните Telegram настройки!")
+                        if not targets:
+                            st.error("Выберите хотя бы одну платформу!")
                         elif not pending.get("image_base64"):
                             st.error("Нет картинки в черновике!")
                         else:
-                            with st.spinner("Публикую..."):
+                            with st.spinner(f"Публикую на {', '.join(_PLATFORM_LABELS.get(t, t) for t in targets)}..."):
                                 try:
                                     # Decode image to temp file
                                     tmp_path = base64_to_tempfile(pending["image_base64"])
                                     try:
-                                        result = send_post(
-                                            tmp_path,
-                                            draft_text,
-                                            bot_token=bot_token,
-                                            channel_id=channel_id,
+                                        pub_results = _publish_to_platforms(
+                                            tmp_path, draft_text, targets, env,
                                         )
-                                        msg_id = result["result"]["message_id"]
                                     finally:
                                         try:
                                             os.remove(tmp_path)
                                         except OSError:
                                             pass
 
-                                    # 1. Update pending_post.json on GitHub
-                                    pending["status"] = "published"
-                                    pending["published_at"] = datetime.now().isoformat()
-                                    pending["message_id"] = msg_id
-                                    pending["published_by"] = "manual"
-                                    pending["post_text"] = draft_text
-                                    ok1, err1 = write_github_file(
-                                        PENDING_POST_PATH,
-                                        json.dumps(pending, ensure_ascii=False, indent=2),
-                                        pending_sha,
-                                        f"Manual publish: message_id={msg_id} [manual]",
-                                    )
+                                    # Collect results
+                                    platform_ids = {}
+                                    for plat, pr in pub_results.items():
+                                        if pr["ok"]:
+                                            platform_ids[plat] = pr["message_id"]
+                                        else:
+                                            st.warning(f"{_PLATFORM_LABELS.get(plat, plat)}: {pr['error']}")
 
-                                    # 2. Update ideas.json on GitHub
-                                    ideas_raw, ideas_sha = read_github_file("ideas.json")
-                                    if ideas_raw:
-                                        ideas_data = json.loads(ideas_raw)
+                                    if platform_ids:
+                                        msg_id = platform_ids.get("telegram", list(platform_ids.values())[0])
+
+                                        # 1. Update pending_post.json on GitHub
+                                        pending["status"] = "published"
+                                        pending["published_at"] = datetime.now().isoformat()
+                                        pending["message_id"] = msg_id
+                                        pending["platform_ids"] = platform_ids
+                                        pending["published_by"] = "manual"
+                                        pending["post_text"] = draft_text
+                                        write_github_file(
+                                            PENDING_POST_PATH,
+                                            json.dumps(pending, ensure_ascii=False, indent=2),
+                                            pending_sha,
+                                            f"Manual publish [manual]",
+                                        )
+
+                                        # 2. Update ideas.json on GitHub
+                                        ideas_raw, ideas_sha = read_github_file("ideas.json")
+                                        if ideas_raw:
+                                            ideas_data = json.loads(ideas_raw)
+                                            idx = pending.get("idea_index")
+                                            if idx is not None and idx < len(ideas_data):
+                                                ideas_data[idx]["used"] = True
+                                                write_github_file(
+                                                    "ideas.json",
+                                                    json.dumps(ideas_data, ensure_ascii=False, indent=2),
+                                                    ideas_sha,
+                                                    f"Mark idea #{idx} as used [manual]",
+                                                )
+
+                                        # 3. Update history.json on GitHub
+                                        hist_raw, hist_sha = read_github_file("history.json")
+                                        hist_data = json.loads(hist_raw) if hist_raw else []
+                                        hist_data.append({
+                                            "date": datetime.now().isoformat(),
+                                            "idea": pending.get("idea", ""),
+                                            "post_text": draft_text,
+                                            "text_provider": pending.get("text_provider", ""),
+                                            "image_provider": pending.get("image_provider", ""),
+                                            "message_id": msg_id,
+                                            "platform_ids": platform_ids,
+                                        })
+                                        write_github_file(
+                                            "history.json",
+                                            json.dumps(hist_data, ensure_ascii=False, indent=2),
+                                            hist_sha,
+                                            f"Add history entry [manual]",
+                                        )
+
+                                        # Also update local files
+                                        local_ideas = load_json(IDEAS_FILE, [])
                                         idx = pending.get("idea_index")
-                                        if idx is not None and idx < len(ideas_data):
-                                            ideas_data[idx]["used"] = True
-                                            write_github_file(
-                                                "ideas.json",
-                                                json.dumps(ideas_data, ensure_ascii=False, indent=2),
-                                                ideas_sha,
-                                                f"Mark idea #{idx} as used [manual]",
-                                            )
+                                        if idx is not None and idx < len(local_ideas):
+                                            local_ideas[idx]["used"] = True
+                                            save_json(IDEAS_FILE, local_ideas)
 
-                                    # 3. Update history.json on GitHub
-                                    hist_raw, hist_sha = read_github_file("history.json")
-                                    hist_data = json.loads(hist_raw) if hist_raw else []
-                                    hist_data.append({
-                                        "date": datetime.now().isoformat(),
-                                        "idea": pending.get("idea", ""),
-                                        "post_text": draft_text,
-                                        "text_provider": pending.get("text_provider", ""),
-                                        "image_provider": pending.get("image_provider", ""),
-                                        "message_id": msg_id,
-                                    })
-                                    write_github_file(
-                                        "history.json",
-                                        json.dumps(hist_data, ensure_ascii=False, indent=2),
-                                        hist_sha,
-                                        f"Add history entry for msg {msg_id} [manual]",
-                                    )
+                                        local_hist = load_json(HISTORY_FILE, [])
+                                        local_hist.append({
+                                            "date": datetime.now().isoformat(),
+                                            "idea": pending.get("idea", ""),
+                                            "post_text": draft_text,
+                                            "text_provider": pending.get("text_provider", ""),
+                                            "image_provider": pending.get("image_provider", ""),
+                                            "message_id": msg_id,
+                                            "platform_ids": platform_ids,
+                                        })
+                                        save_json(HISTORY_FILE, local_hist)
 
-                                    # Also update local files
-                                    local_ideas = load_json(IDEAS_FILE, [])
-                                    idx = pending.get("idea_index")
-                                    if idx is not None and idx < len(local_ideas):
-                                        local_ideas[idx]["used"] = True
-                                        save_json(IDEAS_FILE, local_ideas)
-
-                                    local_hist = load_json(HISTORY_FILE, [])
-                                    local_hist.append({
-                                        "date": datetime.now().isoformat(),
-                                        "idea": pending.get("idea", ""),
-                                        "post_text": draft_text,
-                                        "text_provider": pending.get("text_provider", ""),
-                                        "image_provider": pending.get("image_provider", ""),
-                                        "message_id": msg_id,
-                                    })
-                                    save_json(HISTORY_FILE, local_hist)
-
-                                    st.session_state["_flash_success"] = True
-                                    st.session_state["_flash_msg"] = f"✅ Опубликовано! message_id: {msg_id}"
-                                    st.rerun()
+                                        ok_list = ", ".join(_PLATFORM_LABELS.get(p, p) for p in platform_ids)
+                                        st.session_state["_flash_success"] = True
+                                        st.session_state["_flash_msg"] = f"✅ Опубликовано: {ok_list}"
+                                        st.rerun()
 
                                 except Exception as e:
                                     st.error(f"Ошибка публикации: {e}")
