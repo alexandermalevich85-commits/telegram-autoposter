@@ -15,6 +15,7 @@ User token flow:
 4. wall.post with attachment → post_id
 """
 
+import logging
 import requests
 
 from config import VK_ACCESS_TOKEN, VK_GROUP_ID, VK_FOOTER
@@ -22,6 +23,8 @@ from utils import strip_html
 
 _API_VERSION = "5.199"
 _API_BASE = "https://api.vk.com/method"
+
+log = logging.getLogger(__name__)
 
 
 def _vk_post(method: str, params: dict, timeout: int = 15) -> dict:
@@ -62,6 +65,7 @@ def _upload_photo_wall(token: str, gid: str, photo_path: str) -> str:
     attachment = f"photo{info['owner_id']}_{info['id']}"
     if info.get("access_key"):
         attachment += f"_{info['access_key']}"
+    log.info("Wall upload attachment: %s", attachment)
     return attachment
 
 
@@ -98,6 +102,9 @@ def _upload_photo_messages(token: str, gid: str, photo_path: str) -> str:
     # access_key is REQUIRED for message-album photos used in wall posts
     if info.get("access_key"):
         attachment += f"_{info['access_key']}"
+    else:
+        log.warning("Messages photo has NO access_key — wall post may appear without image!")
+    log.info("Messages upload attachment: %s", attachment)
     return attachment
 
 
@@ -138,13 +145,29 @@ def send_post(
         plain_text = plain_text + "\n\n" + footer
 
     # Try wall upload first (user token), fall back to messages upload (group token)
+    # Catch ANY error — not just "group auth" — because VK may return different
+    # error messages for community tokens, and even a "successful" wall upload
+    # can produce an unusable attachment with some token types.
+    attachment = None
+    wall_err = None
     try:
         attachment = _upload_photo_wall(token, gid, photo_path)
-    except RuntimeError as e:
-        if "group auth" in str(e).lower() or "group authorization" in str(e).lower():
+        log.info("Photo uploaded via Wall method")
+    except Exception as e:
+        wall_err = e
+        log.info("Wall upload failed (%s), trying Messages upload...", e)
+
+    if attachment is None:
+        try:
             attachment = _upload_photo_messages(token, gid, photo_path)
-        else:
-            raise
+            log.info("Photo uploaded via Messages method")
+        except Exception as e:
+            # Both methods failed — raise combined error
+            raise RuntimeError(
+                f"VK photo upload failed. Wall: {wall_err}; Messages: {e}"
+            ) from e
+
+    log.info("Final attachment string: %s", attachment)
 
     # Create wall post (using POST to keep token out of URL)
     post_resp = _vk_post("wall.post", {
