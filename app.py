@@ -561,6 +561,83 @@ def _publish_to_platforms(
     return results
 
 
+# ── Platform Preview ──────────────────────────────────────────────────────────
+
+_TG_CAPTION_LIMIT = 1024
+
+
+def _render_platform_previews(post_text: str, image_data, env: dict, key_prefix: str = ""):
+    """Render preview sub-tabs for each active publishing platform."""
+    targets = [t.strip() for t in env.get("PUBLISH_TARGETS", "telegram,vk").split(",") if t.strip()]
+    if not targets:
+        return
+
+    tab_labels = [f"{'📨' if t == 'telegram' else '📘' if t == 'vk' else '💬' if t == 'max' else '📌'} {_PLATFORM_LABELS.get(t, t)}" for t in targets]
+    preview_tabs = st.tabs(tab_labels)
+
+    for tab, target in zip(preview_tabs, targets):
+        with tab:
+            _render_single_preview(target, post_text, image_data, env, key_prefix)
+
+
+def _render_single_preview(target: str, post_text: str, image_data, env: dict, key_prefix: str):
+    """Render a single platform preview with final text + image."""
+    from utils import strip_html
+
+    footer = ""
+    if target == "telegram":
+        footer = env.get("TELEGRAM_FOOTER") or ""
+    elif target == "vk":
+        footer = env.get("VK_FOOTER") or ""
+    elif target == "max":
+        footer = env.get("MAX_FOOTER") or ""
+
+    # Build final text
+    if target == "telegram":
+        final_text = post_text
+        if footer:
+            final_text += "\n\n" + footer
+        # Show HTML-ish preview
+        preview_md = (final_text
+                      .replace("<b>", "**").replace("</b>", "**")
+                      .replace("<i>", "*").replace("</i>", "*")
+                      .replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n"))
+        st.markdown(preview_md, unsafe_allow_html=True)
+        char_count = len(final_text)
+        if char_count <= _TG_CAPTION_LIMIT:
+            st.caption(f"📊 {char_count} / {_TG_CAPTION_LIMIT} символов — фото + подпись")
+        else:
+            st.warning(f"📊 {char_count} символов (лимит {_TG_CAPTION_LIMIT}) — текст уйдёт отдельным сообщением")
+
+    elif target in ("vk", "max"):
+        plain = strip_html(post_text)
+        if footer:
+            plain += "\n\n" + footer
+        st.text(plain)
+        st.caption(f"📊 {len(plain)} символов (plain text, HTML удалён)")
+
+    elif target == "pinterest":
+        plain = strip_html(post_text)
+        lines = plain.split("\n", 1)
+        title = lines[0][:100]
+        description = (lines[1][:500] if len(lines) > 1 else "")
+        pin_link = env.get("PINTEREST_LINK") or ""
+
+        st.markdown(f"**Title:** {title}")
+        if len(lines[0]) > 100:
+            st.warning(f"⚠️ Title обрезан: {len(lines[0])} → 100 символов")
+        if description:
+            st.text(description)
+            if len(lines) > 1 and len(lines[1]) > 500:
+                st.warning(f"⚠️ Description обрезан: {len(lines[1])} → 500 символов")
+        if pin_link:
+            st.info(f"🔗 Visit site: {pin_link}")
+
+    # Show image thumbnail
+    if image_data:
+        st.image(image_data, width=300)
+
+
 def get_expert_face_b64() -> str | None:
     """Get expert face base64: try local file first, then GitHub."""
     # 1. Try local file
@@ -1273,6 +1350,19 @@ with tab_create:
                         except Exception as e:
                             st.error(f"Ошибка: {e}")
 
+        # ── Platform previews ─────────────────────────────────────────
+        st.divider()
+        st.subheader("👁️ Предпросмотр по платформам")
+        _env_preview = load_env_values()
+        _img_preview = (
+            st.session_state["image_path"]
+            if "image_path" in st.session_state and os.path.exists(st.session_state["image_path"])
+            else None
+        )
+        _render_platform_previews(
+            st.session_state["post_text"], _img_preview, _env_preview, key_prefix="create",
+        )
+
         # Publish
         st.divider()
         col_pub, col_regen = st.columns(2)
@@ -1688,6 +1778,18 @@ with tab_auto:
                                         st.error(f"Ошибка сохранения на GitHub: {err}")
                                 except Exception as e:
                                     st.error(f"Ошибка: {e}")
+
+                # ── Platform previews ─────────────────────────────────────
+                st.divider()
+                st.subheader("👁️ Предпросмотр по платформам")
+                _env_draft_preview = load_env_values()
+                _img_draft_preview = (
+                    base64_to_bytes(pending["image_base64"])
+                    if pending.get("image_base64") else None
+                )
+                _render_platform_previews(
+                    draft_text, _img_draft_preview, _env_draft_preview, key_prefix="draft",
+                )
 
                 # ── Action buttons ───────────────────────────────────────
                 st.divider()
