@@ -185,8 +185,10 @@ def _publish_to_platforms(photo_path, caption, targets, env) -> dict:
 ### Особенности API по платформам
 
 **VK API:**
-- 4-шаговый процесс: `getWallUploadServer` → upload фото → `saveWallPhoto` → `wall.post`
-- Нужен community-токен (с правами на публикацию от имени группы)
+- Поддерживает **оба типа токенов**: пользовательский и community (group)
+- User token: `getWallUploadServer` → upload → `saveWallPhoto` → `wall.post`
+- Group token: `getMessagesUploadServer` → upload → `saveMessagesPhoto` → `wall.post`
+- Автоматический fallback: если `getWallUploadServer` вернёт "group authorization failed", переключается на Messages Upload
 - `owner_id` = отрицательный `VK_GROUP_ID` (для публикации в группу)
 - Текст — plain text (HTML-теги удаляются)
 
@@ -379,7 +381,12 @@ def get_gemini_client(api_key_override=None):
 **Проблема:** Бесплатный ключ AI Studio имеет лимит 0 запросов для `gemini-2.5-flash-preview-image` → ошибка 429 RESOURCE_EXHAUSTED.
 **Решение:** Inline face generation (1 вызов вместо 2) снижает расход квоты. Но для стабильной работы нужно **включить биллинг** в AI Studio.
 
-### 9. Библиотека картинок: потеря файлов на Streamlit Cloud (февраль 2026)
+### 9. VK API: `photos.getWallUploadServer` не работает с group token (март 2026)
+**Проблема:** Токен сообщества (community/group token) возвращает ошибку "Group authorization failed: method is unavailable with group auth" при вызове `photos.getWallUploadServer`.
+**Решение:** Добавлен автоматический fallback: если `getWallUploadServer` не доступен, используется `photos.getMessagesUploadServer` + `photos.saveMessagesPhoto`, которые работают с обоими типами токенов.
+**Важно:** `wall.post` работает с group token. Проблема была только в методе загрузки фото.
+
+### 10. Библиотека картинок: потеря файлов на Streamlit Cloud (февраль 2026)
 **Проблема:** Streamlit Cloud использует эфемерную файловую систему — после перезагрузки страницы все загруженные картинки пропадали.
 **Решение:** Добавлена функция `_ensure_image_library_from_github()` — при старте приложения проверяет наличие локального `image_library.json`, если нет — загружает индекс и все картинки из GitHub.
 **Важно:** Требуется `GITHUB_TOKEN` в Streamlit Secrets. Без него синхронизация не работает и картинки теряются при перезагрузке.
@@ -393,14 +400,14 @@ IMAGE_PROVIDER=openai
 AUTOPUBLISH_ENABLED=true
 FACE_SWAP_PROVIDER=
 IMAGE_SOURCE=library
-PUBLISH_TARGETS=telegram
+PUBLISH_TARGETS=telegram,vk
 ```
 
 При этой конфигурации:
 - Текст генерируется через **Gemini** (`gemini-2.5-flash`)
 - Картинка берётся из **библиотеки** (переключается на AI-генерацию в UI)
 - Face swap **отключён**
-- Публикация в **Telegram** (можно добавить vk, max, pinterest через UI)
+- Публикация в **Telegram** и **ВКонтакте** (можно добавить max, pinterest через UI)
 
 ---
 
