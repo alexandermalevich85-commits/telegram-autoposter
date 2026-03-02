@@ -47,34 +47,55 @@ def _vk_post(method: str, params: dict, timeout: int = 15) -> dict:
 def _upload_file_to_server(upload_url: str, photo_path: str) -> dict:
     """Upload an image file to a VK upload server.
 
-    Converts the image to JPEG via a temp file (more reliable than BytesIO
-    on Streamlit Cloud).  The multipart field name ``photo`` matches the
-    official VK API documentation and vk_api library.
+    Two strategies:
+    1. Upload the original file as-is (fast, works if it's already JPEG).
+    2. Fall back to PIL JPEG conversion (handles PNG / broken JPEG).
+    The multipart field name ``photo`` matches VK API docs.
     """
-    # Convert to JPEG temp file for format consistency and reliability
-    img = _PILImage.open(photo_path)
-    fd, tmp_jpg = tempfile.mkstemp(suffix=".jpg", prefix="vk_upload_")
-    os.close(fd)
+    file_size = os.path.getsize(photo_path)
+    print(f"[VK] Source file: {photo_path} ({file_size} bytes)")
+
+    # --- Attempt 1: upload original file ---
+    with open(photo_path, "rb") as f:
+        upload_resp = requests.post(
+            upload_url,
+            files={"photo": ("photo.jpg", f, "image/jpeg")},
+            timeout=60,
+        ).json()
+
+    print(f"[VK] Upload attempt 1 (raw): photo={bool(upload_resp.get('photo'))}")
+
+    if upload_resp.get("photo") and upload_resp["photo"] not in ("", "[]"):
+        return upload_resp
+
+    # --- Attempt 2: convert via PIL to guaranteed JPEG ---
+    print("[VK] Raw upload returned empty photo, retrying with PIL JPEG conversion...")
     try:
-        img.convert("RGB").save(tmp_jpg, format="JPEG", quality=95)
-        jpeg_size = os.path.getsize(tmp_jpg)
-        print(f"[VK] JPEG temp file: {tmp_jpg} ({jpeg_size} bytes)")
-
-        with open(tmp_jpg, "rb") as f:
-            upload_resp = requests.post(
-                upload_url,
-                files={"photo": ("photo.jpg", f, "image/jpeg")},
-                timeout=60,
-            ).json()
-    finally:
+        img = _PILImage.open(photo_path)
+        fd, tmp_jpg = tempfile.mkstemp(suffix=".jpg", prefix="vk_upload_")
+        os.close(fd)
         try:
-            os.remove(tmp_jpg)
-        except OSError:
-            pass
+            img.convert("RGB").save(tmp_jpg, format="JPEG", quality=95)
+            jpeg_size = os.path.getsize(tmp_jpg)
+            print(f"[VK] PIL JPEG: {tmp_jpg} ({jpeg_size} bytes)")
 
-    print(f"[VK] Upload response: {upload_resp}")
+            with open(tmp_jpg, "rb") as f:
+                upload_resp = requests.post(
+                    upload_url,
+                    files={"photo": ("photo.jpg", f, "image/jpeg")},
+                    timeout=60,
+                ).json()
+        finally:
+            try:
+                os.remove(tmp_jpg)
+            except OSError:
+                pass
+    except Exception as pil_err:
+        print(f"[VK] PIL conversion failed: {pil_err}")
 
-    if not upload_resp.get("photo") or upload_resp["photo"] == "[]":
+    print(f"[VK] Upload attempt 2 (PIL): {upload_resp}")
+
+    if not upload_resp.get("photo") or upload_resp["photo"] in ("", "[]"):
         raise RuntimeError(f"VK photo upload returned empty: {upload_resp}")
 
     return upload_resp
@@ -117,7 +138,7 @@ def _upload_photo_messages(token: str, gid: str, photo_path: str) -> str:
     """
     print("[VK] Trying photos.getMessagesUploadServer...")
     resp = _vk_post("photos.getMessagesUploadServer", {
-        "group_id": gid, "access_token": token,
+        "group_id": gid, "peer_id": 0, "access_token": token,
     })
     upload_url = resp["response"]["upload_url"]
     print("[VK] Got messages upload URL")
