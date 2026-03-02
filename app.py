@@ -368,12 +368,18 @@ def sync_env_backup_to_github(env_data: dict) -> tuple[bool, str]:
     backup = {k: env_data.get(k, "") for k in _ENV_BACKUP_KEYS if env_data.get(k)}
     if not backup:
         return True, ""
+    # Log what we're saving (first 15 chars of each value)
+    for k, v in backup.items():
+        print(f"[env_backup] {k}: {v[:15]}..." if len(v) > 15 else f"[env_backup] {k}: {v}")
     content = json.dumps(backup, ensure_ascii=False, indent=2)
     _, sha = read_github_file(_ENV_BACKUP_PATH)
-    return write_github_file(
+    print(f"[env_backup] Existing SHA: {sha[:12] if sha else 'NONE (new file)'}")
+    ok, err = write_github_file(
         _ENV_BACKUP_PATH, content, sha,
         "Sync env backup [streamlit]",
     )
+    print(f"[env_backup] Write result: {'OK' if ok else f'FAILED: {err}'}")
+    return ok, err
 
 
 def _ensure_settings_from_github() -> None:
@@ -384,11 +390,30 @@ def _ensure_settings_from_github() -> None:
     - provider.cfg: providers, IMAGE_SOURCE, PUBLISH_TARGETS, footers
     - env_backup.json: API keys, tokens, credentials
 
-    IMPORTANT: env_backup.json is the latest user-saved state (updated on
-    every "Save" click in sidebar).  It ALWAYS overwrites os.environ so
-    that token changes made via the UI survive page reloads — even if
-    st.secrets still contains an older value.
+    Priority order (highest → lowest):
+    1. Local .env file — most recent save (survives within-session reruns)
+    2. env_backup.json on GitHub — persists across full Cloud restarts
+    3. st.secrets — static deployment config (set once)
+
+    We only fill in values from GitHub that the local .env does NOT have.
     """
+    # Read local .env to know which keys are already fresh
+    _local_keys: set[str] = set()
+    if os.path.exists(ENV_FILE):
+        try:
+            with open(ENV_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, _, v = line.partition("=")
+                        k, v = k.strip(), v.strip()
+                        if v and not v.startswith("ВСТАВЬТЕ"):
+                            _local_keys.add(k)
+                            # Also make sure os.environ has this value
+                            os.environ[k] = v
+        except Exception:
+            pass
+
     # 1. Restore non-secret settings from provider.cfg
     cfg = read_provider_cfg_from_github()
     if cfg:
@@ -398,19 +423,21 @@ def _ensure_settings_from_github() -> None:
             "TELEGRAM_FOOTER", "VK_FOOTER", "MAX_FOOTER", "PINTEREST_LINK",
         ):
             val = cfg.get(key, "")
-            if val:
+            if val and key not in _local_keys:
                 os.environ[key] = val
 
     # 2. Restore API keys / credentials from env_backup.json
-    #    ALWAYS overwrite — env_backup.json is the authoritative source
-    #    for user-saved credentials (more recent than st.secrets).
+    #    Only set keys that are missing from .env (i.e. after a full restart
+    #    when .env is gone).  Never overwrite fresh .env values.
     content, _ = read_github_file(_ENV_BACKUP_PATH)
     if content:
         try:
             backup = json.loads(content)
             for key, val in backup.items():
-                if val:
-                    os.environ[key] = val
+                if val and key not in _local_keys:
+                    existing = os.environ.get(key, "")
+                    if not existing or existing.startswith("ВСТАВЬТЕ"):
+                        os.environ[key] = val
         except Exception:
             pass
 
