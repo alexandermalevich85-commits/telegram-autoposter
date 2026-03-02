@@ -479,12 +479,26 @@ def load_prompts() -> dict:
 
 
 def save_env(values: dict):
+    # 1. Read existing .env values so we MERGE instead of overwrite.
+    #    This preserves keys not managed by the sidebar (e.g. GITHUB_TOKEN).
+    existing = {}
+    if os.path.exists(ENV_FILE):
+        with open(ENV_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, _, v = line.partition("=")
+                    existing[k.strip()] = v.strip()
+
+    # 2. Merge: new values override old ones
+    merged = {**existing, **values}
+
+    # 3. Write merged result + update os.environ
     lines = []
-    for key, val in values.items():
-        lines.append(f"{key}={val}")
-        # Also update os.environ so values survive within the same process
-        # (on Streamlit Cloud .env is ephemeral but os.environ persists until restart)
-        os.environ[key] = str(val)
+    for key, val in merged.items():
+        sval = str(val)
+        lines.append(f"{key}={sval}")
+        os.environ[key] = sval
     with open(ENV_FILE, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
@@ -960,11 +974,33 @@ with st.sidebar:
         else:
             st.info("💡 Добавьте GITHUB_TOKEN для авто-синхронизации с GitHub")
 
+# ── Tab helpers ───────────────────────────────────────────────────────────────
+
+_TAB_NAMES = ["✏️ Промпты", "📋 Идеи", "🚀 Создать пост", "⏰ Автопубликация", "📊 История", "🖼️ Библиотека"]
+_TAB_CREATE = 2
+_TAB_AUTO = 3
+_TAB_IDEAS = 1
+_TAB_LIBRARY = 5
+
+
+def _rerun_to_tab(tab_index: int):
+    """Save the target tab index and rerun so the correct tab is activated."""
+    st.session_state["_active_tab"] = tab_index
+    st.rerun()
+
+
 # ── Tabs ─────────────────────────────────────────────────────────────────────
 
-tab_prompts, tab_ideas, tab_create, tab_auto, tab_history, tab_library = st.tabs(
-    ["✏️ Промпты", "📋 Идеи", "🚀 Создать пост", "⏰ Автопубликация", "📊 История", "🖼️ Библиотека"]
-)
+tab_prompts, tab_ideas, tab_create, tab_auto, tab_history, tab_library = st.tabs(_TAB_NAMES)
+
+# Restore active tab after st.rerun() via JavaScript click
+if "_active_tab" in st.session_state:
+    _target_tab = st.session_state.pop("_active_tab")
+    import streamlit.components.v1 as _components
+    _components.html(
+        f'<script>window.parent.document.querySelectorAll(\'button[data-baseweb="tab"]\')[{_target_tab}]?.click();</script>',
+        height=0,
+    )
 
 # ── Tab: Prompts ─────────────────────────────────────────────────────────────
 
@@ -1268,7 +1304,7 @@ with tab_create:
                         pass
                 st.session_state["image_path"] = custom_path
                 st.success("Картинка заменена!")
-                st.rerun()
+                _rerun_to_tab(_TAB_CREATE)
 
             edited_img_prompt = st.text_area(
                 "Промпт для картинки (можно изменить)",
@@ -1306,7 +1342,7 @@ with tab_create:
                         if _get_github_token():
                             from image_library import load_index as _regen_lib_idx
                             sync_image_library_index_to_github(_regen_lib_idx())
-                        st.rerun()
+                        _rerun_to_tab(_TAB_CREATE)
                     else:
                         st.error("Библиотека пуста!")
             else:
@@ -1346,7 +1382,7 @@ with tab_create:
                                 except Exception:
                                     pass
                             st.session_state["image_path"] = image_path
-                            st.rerun()
+                            _rerun_to_tab(_TAB_CREATE)
                         except Exception as e:
                             st.error(f"Ошибка: {e}")
 
@@ -1429,7 +1465,7 @@ with tab_create:
                                 ok_list = ", ".join(_PLATFORM_LABELS.get(p, p) for p in platform_ids)
                                 st.session_state["_flash_success"] = True
                                 st.session_state["_flash_msg"] = f"✅ Опубликовано: {ok_list}"
-                                st.rerun()
+                                _rerun_to_tab(_TAB_CREATE)
 
                         except Exception as e:
                             st.error(f"Ошибка публикации: {e}")
@@ -1441,7 +1477,7 @@ with tab_create:
                     os.remove(old_path)
                 st.session_state.pop("post_text", None)
                 st.session_state.pop("image_prompt", None)
-                st.rerun()
+                _rerun_to_tab(_TAB_CREATE)
 
 # ── Tab: Ideas ───────────────────────────────────────────────────────────────
 
@@ -1564,7 +1600,7 @@ with tab_auto:
             )
             if ok:
                 st.success("✅ Автопубликация " + ("включена" if new_enabled else "выключена"))
-                st.rerun()
+                _rerun_to_tab(_TAB_AUTO)
             else:
                 st.error(f"Ошибка обновления: {err}")
 
@@ -1678,7 +1714,7 @@ with tab_auto:
                         )
                         if ok:
                             st.success("Картинка заменена!")
-                            st.rerun()
+                            _rerun_to_tab(_TAB_AUTO)
                         else:
                             st.error(f"Ошибка сохранения: {err}")
 
@@ -1719,7 +1755,7 @@ with tab_auto:
                                     sync_image_library_index_to_github(_draft_lib_idx())
                                 if ok:
                                     st.success(f"Картинка #{_dl_idx} из библиотеки!")
-                                    st.rerun()
+                                    _rerun_to_tab(_TAB_AUTO)
                                 else:
                                     st.error(f"Ошибка: {err}")
                             else:
@@ -1773,7 +1809,7 @@ with tab_auto:
                                     )
                                     if ok:
                                         st.success("Картинка обновлена!")
-                                        st.rerun()
+                                        _rerun_to_tab(_TAB_AUTO)
                                     else:
                                         st.error(f"Ошибка сохранения на GitHub: {err}")
                                 except Exception as e:
@@ -1900,7 +1936,7 @@ with tab_auto:
                                         ok_list = ", ".join(_PLATFORM_LABELS.get(p, p) for p in platform_ids)
                                         st.session_state["_flash_success"] = True
                                         st.session_state["_flash_msg"] = f"✅ Опубликовано: {ok_list}"
-                                        st.rerun()
+                                        _rerun_to_tab(_TAB_AUTO)
 
                                 except Exception as e:
                                     st.error(f"Ошибка публикации: {e}")
@@ -1918,7 +1954,7 @@ with tab_auto:
                         )
                         if ok:
                             st.success("Текст черновика сохранён на GitHub!")
-                            st.rerun()
+                            _rerun_to_tab(_TAB_AUTO)
                         else:
                             st.error(f"Ошибка: {err}")
 
@@ -2057,7 +2093,7 @@ with tab_auto:
                         if ok:
                             st.session_state["_flash_success"] = True
                             st.session_state["_flash_msg"] = "✅ Черновик сгенерирован и сохранён!"
-                            st.rerun()
+                            _rerun_to_tab(_TAB_AUTO)
                         else:
                             st.error(f"Ошибка сохранения на GitHub: {err}")
     else:
