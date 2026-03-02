@@ -383,6 +383,11 @@ def _ensure_settings_from_github() -> None:
     settings saved via the sidebar are lost.  This function restores:
     - provider.cfg: providers, IMAGE_SOURCE, PUBLISH_TARGETS, footers
     - env_backup.json: API keys, tokens, credentials
+
+    IMPORTANT: env_backup.json is the latest user-saved state (updated on
+    every "Save" click in sidebar).  It ALWAYS overwrites os.environ so
+    that token changes made via the UI survive page reloads — even if
+    st.secrets still contains an older value.
     """
     # 1. Restore non-secret settings from provider.cfg
     cfg = read_provider_cfg_from_github()
@@ -393,20 +398,18 @@ def _ensure_settings_from_github() -> None:
             "TELEGRAM_FOOTER", "VK_FOOTER", "MAX_FOOTER", "PINTEREST_LINK",
         ):
             val = cfg.get(key, "")
-            if val and not os.environ.get(key):
+            if val:
                 os.environ[key] = val
 
     # 2. Restore API keys / credentials from env_backup.json
+    #    ALWAYS overwrite — env_backup.json is the authoritative source
+    #    for user-saved credentials (more recent than st.secrets).
     content, _ = read_github_file(_ENV_BACKUP_PATH)
     if content:
         try:
             backup = json.loads(content)
             for key, val in backup.items():
-                if not val:
-                    continue
-                existing = os.environ.get(key, "")
-                # Overwrite if empty or placeholder
-                if not existing or existing.startswith("ВСТАВЬТЕ"):
+                if val:
                     os.environ[key] = val
         except Exception:
             pass
