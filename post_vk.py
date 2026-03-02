@@ -15,9 +15,12 @@ Messages upload flow (fallback for community tokens):
 4. wall.post with attachment → post_id
 """
 
+import io
 import os
 import logging
 import requests
+
+from PIL import Image as _PILImage
 
 from config import VK_ACCESS_TOKEN, VK_GROUP_ID, VK_FOOTER
 from utils import strip_html
@@ -43,18 +46,25 @@ def _vk_post(method: str, params: dict, timeout: int = 15) -> dict:
 def _upload_file_to_server(upload_url: str, photo_path: str) -> dict:
     """Upload an image file to a VK upload server.
 
-    VK upload endpoints for photos (wall, messages) expect the multipart
-    field name ``photo`` — this matches the official VK API documentation
-    and the ``vk_api`` library (``FilesOpener`` default key).
+    Always converts the image to JPEG before uploading — VK photo endpoints
+    work most reliably with JPEG.  The multipart field name ``photo`` matches
+    the official VK API documentation.
     """
-    filename = os.path.basename(photo_path)
+    # Convert to JPEG in memory to guarantee format consistency
+    img = _PILImage.open(photo_path)
+    buf = io.BytesIO()
+    img.convert("RGB").save(buf, format="JPEG", quality=95)
+    buf.seek(0)
+    jpeg_size = buf.getbuffer().nbytes
 
-    with open(photo_path, "rb") as f:
-        upload_resp = requests.post(
-            upload_url,
-            files={"photo": (filename, f, "image/jpeg")},
-            timeout=60,
-        ).json()
+    filename = os.path.splitext(os.path.basename(photo_path))[0] + ".jpg"
+    print(f"[VK] Uploading {filename} ({jpeg_size} bytes, converted to JPEG)")
+
+    upload_resp = requests.post(
+        upload_url,
+        files={"photo": (filename, buf, "image/jpeg")},
+        timeout=60,
+    ).json()
 
     print(f"[VK] Upload response: {upload_resp}")
 
