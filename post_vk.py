@@ -43,22 +43,20 @@ def _vk_post(method: str, params: dict, timeout: int = 15) -> dict:
 def _upload_file_to_server(upload_url: str, photo_path: str) -> dict:
     """Upload an image file to a VK upload server.
 
-    Uses 'file1' as the field name (matching vk_api library convention)
-    with explicit content-type for reliability.
+    VK upload endpoints for photos (wall, messages) expect the multipart
+    field name ``photo`` — this matches the official VK API documentation
+    and the ``vk_api`` library (``FilesOpener`` default key).
     """
     filename = os.path.basename(photo_path)
-    # Determine content type from extension
-    ext = os.path.splitext(filename)[1].lower()
-    content_type = "image/png" if ext == ".png" else "image/jpeg"
 
     with open(photo_path, "rb") as f:
         upload_resp = requests.post(
             upload_url,
-            files={"file1": (filename, f, content_type)},
+            files={"photo": (filename, f, "image/jpeg")},
             timeout=60,
         ).json()
 
-    print(f"[VK] Upload response keys: {list(upload_resp.keys())}")
+    print(f"[VK] Upload response: {upload_resp}")
 
     if not upload_resp.get("photo") or upload_resp["photo"] == "[]":
         raise RuntimeError(f"VK photo upload returned empty: {upload_resp}")
