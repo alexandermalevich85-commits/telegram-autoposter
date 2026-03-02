@@ -201,6 +201,7 @@ def send_post(
         plain_text = plain_text + "\n\n" + footer
 
     print(f"[VK] Publishing to group {gid}, image: {photo_path}")
+    print(f"[VK] Token: {token[:20]}...{token[-5:]}" if len(token) > 25 else f"[VK] Token: {token}")
     print(f"[VK] Image exists: {os.path.exists(photo_path)}, "
           f"size: {os.path.getsize(photo_path) if os.path.exists(photo_path) else 0} bytes")
 
