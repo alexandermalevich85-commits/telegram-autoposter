@@ -402,7 +402,11 @@ def _ensure_settings_from_github() -> None:
         try:
             backup = json.loads(content)
             for key, val in backup.items():
-                if val and not os.environ.get(key):
+                if not val:
+                    continue
+                existing = os.environ.get(key, "")
+                # Overwrite if empty or placeholder
+                if not existing or existing.startswith("ВСТАВЬТЕ"):
                     os.environ[key] = val
         except Exception:
             pass
@@ -715,6 +719,16 @@ _ensure_image_library_from_github()
 # Show flash messages saved before st.rerun()
 if st.session_state.pop("_flash_success", None):
     st.success(st.session_state.pop("_flash_msg", "Готово!"))
+
+# DEBUG: Check VK token loading
+_dbg_env = load_env_values()
+_vk_from_env = _dbg_env.get("VK_ACCESS_TOKEN", "")
+_vk_from_os = os.environ.get("VK_ACCESS_TOKEN", "")
+print(f"[DEBUG] VK token from load_env_values: {'YES (' + _vk_from_env[:15] + '...)' if _vk_from_env else 'EMPTY'}")
+print(f"[DEBUG] VK token from os.environ: {'YES (' + _vk_from_os[:15] + '...)' if _vk_from_os else 'EMPTY'}")
+print(f"[DEBUG] .env exists: {os.path.exists(ENV_FILE)}")
+print(f"[DEBUG] PUBLISH_TARGETS: {_dbg_env.get('PUBLISH_TARGETS', 'NOT SET')}")
+del _dbg_env
 
 # ── Sidebar — Settings ──────────────────────────────────────────────────────
 
