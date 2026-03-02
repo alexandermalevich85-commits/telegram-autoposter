@@ -18,6 +18,7 @@ Messages upload flow (fallback for community tokens):
 import io
 import os
 import logging
+import tempfile
 import requests
 
 from PIL import Image as _PILImage
@@ -46,25 +47,30 @@ def _vk_post(method: str, params: dict, timeout: int = 15) -> dict:
 def _upload_file_to_server(upload_url: str, photo_path: str) -> dict:
     """Upload an image file to a VK upload server.
 
-    Always converts the image to JPEG before uploading — VK photo endpoints
-    work most reliably with JPEG.  The multipart field name ``photo`` matches
-    the official VK API documentation.
+    Converts the image to JPEG via a temp file (more reliable than BytesIO
+    on Streamlit Cloud).  The multipart field name ``photo`` matches the
+    official VK API documentation and vk_api library.
     """
-    # Convert to JPEG in memory to guarantee format consistency
+    # Convert to JPEG temp file for format consistency and reliability
     img = _PILImage.open(photo_path)
-    buf = io.BytesIO()
-    img.convert("RGB").save(buf, format="JPEG", quality=95)
-    buf.seek(0)
-    jpeg_size = buf.getbuffer().nbytes
+    fd, tmp_jpg = tempfile.mkstemp(suffix=".jpg", prefix="vk_upload_")
+    os.close(fd)
+    try:
+        img.convert("RGB").save(tmp_jpg, format="JPEG", quality=95)
+        jpeg_size = os.path.getsize(tmp_jpg)
+        print(f"[VK] JPEG temp file: {tmp_jpg} ({jpeg_size} bytes)")
 
-    filename = os.path.splitext(os.path.basename(photo_path))[0] + ".jpg"
-    print(f"[VK] Uploading {filename} ({jpeg_size} bytes, converted to JPEG)")
-
-    upload_resp = requests.post(
-        upload_url,
-        files={"photo": (filename, buf, "image/jpeg")},
-        timeout=60,
-    ).json()
+        with open(tmp_jpg, "rb") as f:
+            upload_resp = requests.post(
+                upload_url,
+                files={"photo": ("photo.jpg", f, "image/jpeg")},
+                timeout=60,
+            ).json()
+    finally:
+        try:
+            os.remove(tmp_jpg)
+        except OSError:
+            pass
 
     print(f"[VK] Upload response: {upload_resp}")
 
